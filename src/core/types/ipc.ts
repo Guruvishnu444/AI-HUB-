@@ -3,6 +3,27 @@ import { ModelMetadata } from './model';
 import { ChatMessage, StreamChunk } from './chat';
 import { HubErrorDetails } from './errors';
 
+// Workspace types (inlined to avoid circular imports)
+export interface FileTreeNode {
+    name: string;
+    relativePath: string;
+    type: 'file' | 'directory';
+    isBlocked: boolean;
+    isSensitive: boolean;
+    children?: FileTreeNode[];
+    sizeBytes?: number;
+}
+
+export interface FileDiff {
+    relativePath: string;
+    originalContent: string;
+    proposedContent: string;
+    hunks: Array<{ type: 'add' | 'remove' | 'unchanged'; lineNumber: number; content: string }>;
+    isNewFile: boolean;
+    linesAdded: number;
+    linesRemoved: number;
+}
+
 export interface FallbackConfig {
     enabled: boolean;
     priorityOrder: string[];         // Array of provider IDs in fallback priority order
@@ -44,11 +65,19 @@ export type WebviewToHostMessage =
     | { type: 'TOGGLE_MODEL'; modelId: string; enabled: boolean }
     | { type: 'UPDATE_FALLBACK_CONFIG'; config: FallbackConfig }
     | { type: 'UPDATE_PROVIDER_CONFIG'; config: ProviderConfig }
-    | { type: 'SEND_PROMPT'; prompt: string; providerId: string; modelId: string; attachments?: any[] }
+    | { type: 'SEND_PROMPT'; prompt: string; providerId: string; modelId: string; attachments?: any[]; clientMessageId?: string }
     | { type: 'ABORT_PROMPT'; requestId: string }
     | { type: 'CLEAR_HISTORY' }
     | { type: 'RESOLVE_AMBIGUOUS_CHOICE'; requestId: string; action: 'retry_with_fallback' | 'cancel' }
-    | { type: 'OPEN_EXTERNAL_URL'; url: string };
+    | { type: 'OPEN_EXTERNAL_URL'; url: string }
+    // Phase 7: Workspace
+    | { type: 'WORKSPACE_GET_TREE'; path?: string }
+    | { type: 'WORKSPACE_READ_FILE'; relativePath: string }
+    | { type: 'WORKSPACE_SEARCH'; query: string }
+    | { type: 'WORKSPACE_PICK_FOLDER' }
+    // Phase 8: Diff / Edit
+    | { type: 'WORKSPACE_APPROVE_EDIT'; editId: string }
+    | { type: 'WORKSPACE_REJECT_EDIT'; editId: string };
 
 /**
  * Messages sent from Extension Host to Webview
@@ -72,6 +101,7 @@ export type HostToWebviewMessage =
               modelId?: string;
               details: string;
           }>;
+          workspaceRoot: string | null;
       }
     | { type: 'USER_MESSAGE_COMMITTED'; message: ChatMessage }
     | { type: 'KEY_SAVED'; providerId: string; success: boolean }
@@ -95,4 +125,12 @@ export type HostToWebviewMessage =
           modelId: string;
           userPrompt: string;
       }
-    | { type: 'SHOW_NOTIFICATION'; message: string; severity: 'info' | 'warn' | 'error' };
+    | { type: 'SHOW_NOTIFICATION'; message: string; severity: 'info' | 'warn' | 'error' }
+    // Phase 7
+    | { type: 'WORKSPACE_TREE'; nodes: FileTreeNode[]; workspaceRoot: string | null }
+    | { type: 'WORKSPACE_FILE_CONTENT'; relativePath: string; content: string; sizeBytes: number; truncated: boolean; warning?: string }
+    | { type: 'WORKSPACE_SEARCH_RESULTS'; results: Array<{ file: string; line: number; text: string }> }
+    // Phase 8
+    | { type: 'DIFF_PROPOSAL'; editId: string; diff: FileDiff }
+    | { type: 'EDIT_APPROVED'; editId: string; path: string; bytesWritten: number }
+    | { type: 'EDIT_REJECTED'; editId: string };

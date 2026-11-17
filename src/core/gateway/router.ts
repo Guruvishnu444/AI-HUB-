@@ -7,21 +7,37 @@ import { OpenAICompatibleAdapter } from '../adapters/openaiCompatible';
 import { WebviewToHostMessage, HostToWebviewMessage, ProviderSummary } from '../types/ipc';
 import { ChatMessage, ChatCompletionRequest } from '../types/chat';
 import { HubError } from '../types/errors';
+import { WorkspaceGuardrails } from '../../workspace/guardrails';
+import { FileTreeExplorer } from '../../workspace/fileTree';
+import { DiffEngine } from '../../workspace/diffEngine';
 
 export class GatewayRouter {
     private vault: SecretVault;
     private db: HubDatabase;
     private registry: AdapterRegistry;
     private fallbackEngine: FallbackEngine;
+    private guardrails?: WorkspaceGuardrails;
+    private fileTree?: FileTreeExplorer;
+    private diffEngine?: DiffEngine;
     private messages: ChatMessage[] = [];
     private activeProviderId = 'google-gemini';
     private activeModelId = 'gemini-2.5-flash-preview-05-20';
     private activeAbortControllers: Map<string, AbortController> = new Map();
 
-    constructor(vault: SecretVault, db: HubDatabase, registry: AdapterRegistry) {
+    constructor(
+        vault: SecretVault,
+        db: HubDatabase,
+        registry: AdapterRegistry,
+        guardrails?: WorkspaceGuardrails,
+        fileTree?: FileTreeExplorer,
+        diffEngine?: DiffEngine
+    ) {
         this.vault = vault;
         this.db = db;
         this.registry = registry;
+        this.guardrails = guardrails;
+        this.fileTree = fileTree;
+        this.diffEngine = diffEngine;
         this.fallbackEngine = new FallbackEngine(registry, vault, db);
     }
 
@@ -222,11 +238,111 @@ export class GatewayRouter {
                 vscode.env.openExternal(vscode.Uri.parse(msg.url));
                 break;
             }
+
+            case 'WORKSPACE_GET_TREE': {
+                if (!this.fileTree) {
+                    postMessage({ type: 'SHOW_NOTIFICATION', message: 'Workspace subsystem not initialized.', severity: 'warn' });
+                    return;
+                }
+                const nodes = await this.fileTree.buildTree(msg.path || '', 2);
+                postMessage({
+                    type: 'WORKSPACE_TREE',
+                    nodes,
+                    workspaceRoot: this.guardrails?.getWorkspaceRoot() ?? null
+                });
+                break;
+            }
+
+            case 'WORKSPACE_READ_FILE': {
+                if (!this.fileTree) return;
+                try {
+                    const res = await this.fileTree.readFile(msg.relativePath);
+                    postMessage({
+                        type: 'WORKSPACE_FILE_CONTENT',
+                        relativePath: msg.relativePath,
+                        content: res.content,
+                        sizeBytes: res.sizeBytes,
+                        truncated: res.truncated,
+                        warning: res.warning
+                    });
+                } catch (err: any) {
+                    postMessage({
+                        type: 'SHOW_NOTIFICATION',
+                        message: `File read failed: ${err?.message || err}`,
+                        severity: 'error'
+                    });
+                }
+                break;
+            }
+
+            case 'WORKSPACE_SEARCH': {
+                if (!this.fileTree) return;
+                const results = await this.fileTree.searchFiles(msg.query);
+                postMessage({
+                    type: 'WORKSPACE_SEARCH_RESULTS',
+                    results
+                });
+                break;
+            }
+
+            case 'WORKSPACE_PICK_FOLDER': {
+                await vscode.commands.executeCommand('antigravityHub.pickWorkspace');
+                await this.syncState(postMessage);
+                if (this.fileTree) {
+                    const nodes = await this.fileTree.buildTree('', 2);
+                    postMessage({
+                        type: 'WORKSPACE_TREE',
+                        nodes,
+                        workspaceRoot: this.guardrails?.getWorkspaceRoot() ?? null
+                    });
+                }
+                break;
+            }
+
+            case 'WORKSPACE_APPROVE_EDIT': {
+                if (!this.diffEngine) return;
+                try {
+                    const result = await this.diffEngine.approveEdit(msg.editId);
+                    postMessage({
+                        type: 'EDIT_APPROVED',
+                        editId: msg.editId,
+                        path: result.path,
+                        bytesWritten: result.bytesWritten
+                    });
+                    postMessage({
+                        type: 'SHOW_NOTIFICATION',
+                        message: `Saved changes to ${result.path} (${result.bytesWritten} bytes).`,
+                        severity: 'info'
+                    });
+                } catch (err: any) {
+                    postMessage({
+                        type: 'SHOW_NOTIFICATION',
+                        message: `Failed to apply edit: ${err?.message || err}`,
+                        severity: 'error'
+                    });
+                }
+                break;
+            }
+
+            case 'WORKSPACE_REJECT_EDIT': {
+                if (!this.diffEngine) return;
+                this.diffEngine.rejectEdit(msg.editId);
+                postMessage({
+                    type: 'EDIT_REJECTED',
+                    editId: msg.editId
+                });
+                postMessage({
+                    type: 'SHOW_NOTIFICATION',
+                    message: 'Diff proposal rejected.',
+                    severity: 'info'
+                });
+                break;
+            }
         }
     }
 
     private async handleSendPrompt(
-        msg: { prompt: string; providerId: string; modelId: string; attachments?: any[] },
+        msg: { prompt: string; providerId: string; modelId: string; attachments?: any[]; clientMessageId?: string },
         postMessage: (out: HostToWebviewMessage) => void
     ): Promise<void> {
         this.activeProviderId = msg.providerId;
@@ -236,9 +352,9 @@ export class GatewayRouter {
         const abortController = new AbortController();
         this.activeAbortControllers.set(requestId, abortController);
 
-        // Add User Message to History
+        // Add User Message to History using client-supplied ID if provided to prevent duplicate rendering
         const userMsg: ChatMessage = {
-            id: `msg_u_${Date.now()}`,
+            id: msg.clientMessageId || `msg_u_${Date.now()}`,
             role: 'user',
             content: msg.prompt,
             attachments: msg.attachments,
@@ -372,7 +488,8 @@ export class GatewayRouter {
             modelUsage: this.db.getModelUsageSummary(),
             totalTokens: this.db.getTotalTokens(),
             totalRequests: this.db.getTotalRequests(),
-            auditLogs: this.db.getAuditLogs().slice(-50).reverse()
+            auditLogs: this.db.getAuditLogs().slice(-50).reverse(),
+            workspaceRoot: this.guardrails?.getWorkspaceRoot() ?? null
         });
     }
 }

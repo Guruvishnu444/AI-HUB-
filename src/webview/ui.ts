@@ -274,6 +274,47 @@ export function getWebviewHtml(): string {
             gap: 10px;
         }
 
+        .diff-container {
+            background: rgba(0, 0, 0, 0.25);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            font-family: var(--vscode-editor-font-family, monospace);
+            font-size: 11.5px;
+            overflow-x: auto;
+            max-height: 280px;
+            margin-top: 8px;
+        }
+        .diff-line {
+            padding: 2px 8px;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .diff-line.add {
+            background: rgba(46, 160, 67, 0.18);
+            color: #7ee787;
+        }
+        .diff-line.remove {
+            background: rgba(248, 81, 73, 0.18);
+            color: #ffa198;
+        }
+        .diff-line.unchanged {
+            opacity: 0.7;
+        }
+
+        .workspace-tree-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 5px 8px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+            font-family: var(--vscode-editor-font-family, monospace);
+        }
+        .workspace-tree-item:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
         .toast {
             position: fixed;
             bottom: 12px;
@@ -295,6 +336,7 @@ export function getWebviewHtml(): string {
     <div class="nav-tabs">
         <button class="tab-btn active" onclick="switchTab('chat')">Chat and Routing</button>
         <button class="tab-btn" onclick="switchTab('providers')">Provider Manager</button>
+        <button class="tab-btn" onclick="switchTab('workspace')">Workspace and Files</button>
         <button class="tab-btn" onclick="switchTab('fallback')">Fallback Rules</button>
         <button class="tab-btn" onclick="switchTab('usage')">Usage and Audit</button>
     </div>
@@ -392,7 +434,91 @@ export function getWebviewHtml(): string {
         <div id="providers-list"></div>
     </div>
 
-    <!-- TAB 3: FALLBACK RULES -->
+    <!-- TAB 3: WORKSPACE AND FILES -->
+    <div id="pane-workspace" class="tab-pane">
+        <!-- Workspace Status & Picker -->
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">Project Workspace</span>
+                <span class="badge badge-blue" id="ws-status-badge">ACTIVE FOLDER</span>
+            </div>
+            <p style="font-size:11.5px; opacity:0.85; margin-bottom:10px;">
+                Current Directory: <code id="ws-root-display" style="font-weight:600;">Loading...</code>
+            </p>
+            <div style="display:flex; gap:8px;">
+                <button onclick="pickWorkspaceFolder()">Choose Project Folder</button>
+                <button class="secondary" onclick="loadWorkspaceTree()">Refresh Files</button>
+            </div>
+        </div>
+
+        <!-- Guardrails Banner -->
+        <div class="card" style="border-left:3px solid var(--badge-blue);">
+            <div class="card-header">
+                <span class="card-title" style="font-size:12px;">Boundary Protection and Guardrails</span>
+                <span class="badge badge-green">PROTECTION ON</span>
+            </div>
+            <p style="font-size:11.5px; opacity:0.8; line-height:1.4;">
+                Path traversal outside the selected project is blocked. Sensitive files such as <code>.env</code>, private keys, certificates, and authentication tokens are automatically excluded and will never be sent to any AI provider.
+            </p>
+        </div>
+
+        <!-- Search in Workspace Files -->
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">Search Project Files</span>
+            </div>
+            <div style="display:flex; gap:8px; margin-bottom:8px;">
+                <input type="text" id="ws-search-input" placeholder="Type pattern to search in project..." onkeydown="if(event.key==='Enter') searchWorkspaceFiles()" style="margin-bottom:0;">
+                <button onclick="searchWorkspaceFiles()" style="flex-shrink:0;">Search</button>
+            </div>
+            <div id="ws-search-results" style="max-height:180px; overflow-y:auto; font-size:11.5px;"></div>
+        </div>
+
+        <!-- Pending Diff Review Card (Appears when AI proposes code changes) -->
+        <div id="diff-review-card" class="card" style="display:none; border:1px solid rgba(14, 99, 156, 0.6);">
+            <div class="card-header">
+                <span class="card-title">Proposed File Modification Review</span>
+                <span class="badge badge-amber" id="diff-file-tag">DIFF PENDING</span>
+            </div>
+            <p style="font-size:11.5px; opacity:0.85; margin-bottom:6px;">
+                Target File: <code id="diff-file-path"></code> |
+                <span style="color:#7ee787;" id="diff-added-count">+0</span> /
+                <span style="color:#ffa198;" id="diff-removed-count">-0</span>
+            </p>
+            <div class="diff-container" id="diff-hunks-container"></div>
+            <div style="display:flex; gap:8px; margin-top:10px;">
+                <button onclick="approveCurrentEdit()" style="background:var(--badge-green);">Approve and Save to Disk</button>
+                <button class="secondary" onclick="rejectCurrentEdit()">Reject Changes</button>
+            </div>
+        </div>
+
+        <!-- File Preview Card -->
+        <div id="file-preview-card" class="card" style="display:none;">
+            <div class="card-header">
+                <span class="card-title" id="preview-file-name">File Content</span>
+                <span class="badge badge-gray" id="preview-file-size">0 KB</span>
+            </div>
+            <div id="preview-warning-banner" style="display:none; margin-bottom:8px; font-size:11.5px; color:#e0ac2b;"></div>
+            <textarea id="preview-file-content" readonly style="height:180px; font-family:var(--vscode-editor-font-family, monospace); font-size:11.5px;"></textarea>
+            <div style="display:flex; gap:8px; margin-top:6px;">
+                <button onclick="attachPreviewToPrompt()">Insert into Chat Prompt</button>
+                <button class="secondary" onclick="closeFilePreview()">Close</button>
+            </div>
+        </div>
+
+        <!-- Project File Tree Explorer -->
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">Workspace File Explorer</span>
+                <span class="badge badge-gray" id="tree-count-badge">0 items</span>
+            </div>
+            <div id="ws-file-list" style="max-height:300px; overflow-y:auto;">
+                <p style="opacity:0.6; padding:8px;">Click "Refresh Files" or select a project folder to load directory tree.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- TAB 4: FALLBACK RULES -->
     <div id="pane-fallback" class="tab-pane">
         <div class="card">
             <div class="card-header">
@@ -495,7 +621,11 @@ export function getWebviewHtml(): string {
             modelUsage: [],
             totalTokens: 0,
             totalRequests: 0,
-            auditLogs: []
+            auditLogs: [],
+            workspaceRoot: null,
+            fileTree: [],
+            currentPreview: null,
+            currentDiff: null
         };
 
         function switchTab(tabName) {
@@ -533,12 +663,31 @@ export function getWebviewHtml(): string {
                     state.totalTokens = msg.totalTokens || 0;
                     state.totalRequests = msg.totalRequests || 0;
                     state.auditLogs = msg.auditLogs || [];
+                    state.workspaceRoot = msg.workspaceRoot || null;
+
+                    const wsDisp = document.getElementById('ws-root-display');
+                    const wsBadge = document.getElementById('ws-status-badge');
+                    if (wsDisp && wsBadge) {
+                        if (state.workspaceRoot) {
+                            wsDisp.textContent = state.workspaceRoot;
+                            wsBadge.textContent = 'ACTIVE FOLDER';
+                            wsBadge.className = 'badge badge-green';
+                        } else {
+                            wsDisp.textContent = 'No project folder chosen';
+                            wsBadge.textContent = 'NO FOLDER';
+                            wsBadge.className = 'badge badge-amber';
+                        }
+                    }
 
                     renderModelSelector();
                     renderProviders();
                     renderFallbackConfig();
                     renderMessages();
                     renderUsageAnalytics();
+
+                    if (state.workspaceRoot && state.fileTree.length === 0) {
+                        loadWorkspaceTree();
+                    }
                     break;
 
                 case 'USER_MESSAGE_COMMITTED':
@@ -554,6 +703,39 @@ export function getWebviewHtml(): string {
                         : \`Failed connecting to \${msg.providerId}: \${msg.result.errorMessage}\`
                     );
                     renderProviders();
+                    break;
+
+                case 'WORKSPACE_TREE':
+                    state.workspaceRoot = msg.workspaceRoot || state.workspaceRoot;
+                    state.fileTree = msg.nodes || [];
+                    renderWorkspaceTree();
+                    break;
+
+                case 'WORKSPACE_FILE_CONTENT':
+                    state.currentPreview = msg;
+                    renderFilePreview(msg);
+                    break;
+
+                case 'WORKSPACE_SEARCH_RESULTS':
+                    renderSearchResults(msg.results);
+                    break;
+
+                case 'DIFF_PROPOSAL':
+                    state.currentDiff = msg;
+                    renderDiffProposal(msg);
+                    break;
+
+                case 'EDIT_APPROVED':
+                    state.currentDiff = null;
+                    document.getElementById('diff-review-card').style.display = 'none';
+                    showToast('Changes saved to disk: ' + msg.path);
+                    loadWorkspaceTree();
+                    break;
+
+                case 'EDIT_REJECTED':
+                    state.currentDiff = null;
+                    document.getElementById('diff-review-card').style.display = 'none';
+                    showToast('Proposed changes were rejected.');
                     break;
 
                 case 'STREAM_START':
@@ -912,9 +1094,11 @@ export function getWebviewHtml(): string {
             const prompt = input.value.trim();
             if (!prompt) return;
 
+            const clientMsgId = 'msg_u_' + Date.now();
+
             // Immediately show what was sent in the chat
             const userMsg = {
-                id: \`local_u_\${Date.now()}\`,
+                id: clientMsgId,
                 role: 'user',
                 content: prompt,
                 timestamp: Date.now()
@@ -923,7 +1107,7 @@ export function getWebviewHtml(): string {
 
             // Immediately add a pending response bubble
             const pendingAssistantMsg = {
-                id: \`local_a_\${Date.now()}\`,
+                id: 'pending_' + Date.now(),
                 role: 'assistant',
                 content: '',
                 providerId: state.activeProviderId,
@@ -939,7 +1123,8 @@ export function getWebviewHtml(): string {
                 type: 'SEND_PROMPT',
                 prompt,
                 providerId: state.activeProviderId,
-                modelId: state.activeModelId
+                modelId: state.activeModelId,
+                clientMessageId: clientMsgId
             });
 
             input.value = '';
@@ -981,6 +1166,162 @@ export function getWebviewHtml(): string {
 
         function discoverModels(providerId) {
             vscode.postMessage({ type: 'DISCOVER_MODELS', providerId });
+        }
+
+        /* Workspace & Diff Subsystem */
+        function pickWorkspaceFolder() {
+            vscode.postMessage({ type: 'WORKSPACE_PICK_FOLDER' });
+        }
+
+        function loadWorkspaceTree() {
+            vscode.postMessage({ type: 'WORKSPACE_GET_TREE' });
+        }
+
+        function renderWorkspaceTree() {
+            const container = document.getElementById('ws-file-list');
+            if (!container) return;
+            const countBadge = document.getElementById('tree-count-badge');
+            if (countBadge) countBadge.textContent = state.fileTree.length + ' items';
+
+            if (!state.fileTree || state.fileTree.length === 0) {
+                container.innerHTML = '<p style="opacity:0.6; padding:8px;">No files found or no workspace selected.</p>';
+                return;
+            }
+
+            container.innerHTML = '';
+            state.fileTree.forEach(node => {
+                const item = document.createElement('div');
+                item.className = 'workspace-tree-item';
+
+                let badgeHtml = '';
+                if (node.isBlocked) {
+                    badgeHtml = '<span class="badge badge-red" style="font-size:10px;">BLOCKED</span>';
+                } else if (node.isSensitive) {
+                    badgeHtml = '<span class="badge badge-amber" style="font-size:10px;">SENSITIVE</span>';
+                } else if (node.type === 'directory') {
+                    badgeHtml = '<span class="badge badge-gray" style="font-size:10px;">DIR</span>';
+                }
+
+                const prefix = node.type === 'directory' ? '[DIR] ' : '      ';
+                item.innerHTML = \`
+                    <div style="display:flex; align-items:center; gap:6px; overflow:hidden; text-overflow:ellipsis;">
+                        <span style="opacity:0.6;">\${prefix}</span>
+                        <span>\${escapeHtml(node.relativePath)}</span>
+                    </div>
+                    <div>\${badgeHtml}</div>
+                \`;
+
+                if (node.type === 'file') {
+                    item.onclick = () => openWorkspaceFile(node.relativePath, node.isBlocked);
+                }
+                container.appendChild(item);
+            });
+        }
+
+        function openWorkspaceFile(relPath, isBlocked) {
+            if (isBlocked) {
+                showToast('File is blocked by security guardrails and cannot be inspected.');
+                return;
+            }
+            vscode.postMessage({ type: 'WORKSPACE_READ_FILE', relativePath: relPath });
+        }
+
+        function renderFilePreview(msg) {
+            const card = document.getElementById('file-preview-card');
+            const nameEl = document.getElementById('preview-file-name');
+            const sizeEl = document.getElementById('preview-file-size');
+            const warnEl = document.getElementById('preview-warning-banner');
+            const contentEl = document.getElementById('preview-file-content');
+
+            card.style.display = 'block';
+            nameEl.textContent = msg.relativePath;
+            sizeEl.textContent = (msg.sizeBytes / 1024).toFixed(1) + ' KB' + (msg.truncated ? ' (Truncated)' : '');
+
+            if (msg.warning) {
+                warnEl.textContent = msg.warning;
+                warnEl.style.display = 'block';
+            } else {
+                warnEl.style.display = 'none';
+            }
+
+            contentEl.value = msg.content;
+            card.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function closeFilePreview() {
+            state.currentPreview = null;
+            document.getElementById('file-preview-card').style.display = 'none';
+        }
+
+        function attachPreviewToPrompt() {
+            if (!state.currentPreview) return;
+            const input = document.getElementById('chat-input');
+            const fileBlock = \`\\n\\n[File: \${state.currentPreview.relativePath}]\\n\` + '\`\`\`\\n' + state.currentPreview.content + '\\n\`\`\`\\n';
+            input.value = (input.value ? input.value + '\\n' : '') + fileBlock;
+            switchTab('chat');
+            input.focus();
+            showToast('File content attached to prompt.');
+        }
+
+        function searchWorkspaceFiles() {
+            const q = document.getElementById('ws-search-input').value.trim();
+            if (!q) return;
+            vscode.postMessage({ type: 'WORKSPACE_SEARCH', query: q });
+        }
+
+        function renderSearchResults(results) {
+            const container = document.getElementById('ws-search-results');
+            if (!container) return;
+            if (!results || results.length === 0) {
+                container.innerHTML = '<p style="opacity:0.6; padding:6px;">No matches found.</p>';
+                return;
+            }
+
+            container.innerHTML = '';
+            results.forEach(res => {
+                const row = document.createElement('div');
+                row.style.padding = '4px 6px';
+                row.style.borderBottom = '1px solid rgba(255,255,255,0.04)';
+                row.style.cursor = 'pointer';
+                row.innerHTML = \`<strong>\${escapeHtml(res.file)}</strong>:\${res.line} <span style="opacity:0.75;">\${escapeHtml(res.text)}</span>\`;
+                row.onclick = () => openWorkspaceFile(res.file, false);
+                container.appendChild(row);
+            });
+        }
+
+        function renderDiffProposal(msg) {
+            const card = document.getElementById('diff-review-card');
+            const pathEl = document.getElementById('diff-file-path');
+            const addEl = document.getElementById('diff-added-count');
+            const remEl = document.getElementById('diff-removed-count');
+            const hunksContainer = document.getElementById('diff-hunks-container');
+
+            card.style.display = 'block';
+            pathEl.textContent = msg.diff.relativePath;
+            addEl.textContent = '+' + msg.diff.linesAdded;
+            remEl.textContent = '-' + msg.diff.linesRemoved;
+
+            hunksContainer.innerHTML = '';
+            (msg.diff.hunks || []).forEach(hunk => {
+                const line = document.createElement('div');
+                line.className = 'diff-line ' + hunk.type;
+                const prefix = hunk.type === 'add' ? '+ ' : hunk.type === 'remove' ? '- ' : '  ';
+                line.textContent = prefix + hunk.content;
+                hunksContainer.appendChild(line);
+            });
+
+            switchTab('workspace');
+            card.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function approveCurrentEdit() {
+            if (!state.currentDiff) return;
+            vscode.postMessage({ type: 'WORKSPACE_APPROVE_EDIT', editId: state.currentDiff.editId });
+        }
+
+        function rejectCurrentEdit() {
+            if (!state.currentDiff) return;
+            vscode.postMessage({ type: 'WORKSPACE_REJECT_EDIT', editId: state.currentDiff.editId });
         }
 
         function showToast(text) {
