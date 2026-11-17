@@ -89,50 +89,17 @@ export class HubDatabase {
         this.providers.set(deepseek.id, deepseek);
     }
 
-    // Map of deprecated model IDs to their current replacements
+    // Map of deprecated or invalid model IDs to verified working replacements
     private static readonly DEPRECATED_MODEL_IDS: Record<string, string> = {
-        'gemini-2.5-flash':     'gemini-2.5-flash-preview-05-20',
-        'gemini-2.5-pro':       'gemini-2.5-pro-preview-06-05',
-        'gemini-2.0-flash':     'gemini-2.0-flash',   // still active, keep same
-        'gemini-3.8-flash':     'gemini-2.5-flash-preview-05-20'  // Google error message alias
+        'gemini-2.5-flash':                 'gemini-2.0-flash',
+        'gemini-2.5-flash-preview-05-20':   'gemini-2.0-flash',
+        'gemini-2.5-pro':                   'gemini-1.5-pro',
+        'gemini-2.5-pro-preview-06-05':     'gemini-1.5-pro',
+        'gemini-3.8-flash':                 'gemini-2.0-flash'
     };
 
     private seedDefaultModels(): void {
         const defaultModels: ModelMetadata[] = [
-            {
-                id: 'gemini-2.5-flash-preview-05-20',
-                displayName: 'Gemini 2.5 Flash',
-                providerId: 'google-gemini',
-                capabilities: {
-                    supportsStreaming: true,
-                    supportsVision: true,
-                    supportsTools: true,
-                    supportsJsonMode: true,
-                    supportsReasoningContent: true,
-                    maxContextTokens: 1048576,
-                    maxOutputTokens: 65536
-                },
-                isCustom: false,
-                isEnabled: true,
-                description: 'Fast multimodal model with 1M context window, vision, tools, and adaptive thinking budget.'
-            },
-            {
-                id: 'gemini-2.5-pro-preview-06-05',
-                displayName: 'Gemini 2.5 Pro',
-                providerId: 'google-gemini',
-                capabilities: {
-                    supportsStreaming: true,
-                    supportsVision: true,
-                    supportsTools: true,
-                    supportsJsonMode: true,
-                    supportsReasoningContent: true,
-                    maxContextTokens: 1048576,
-                    maxOutputTokens: 65536
-                },
-                isCustom: false,
-                isEnabled: true,
-                description: 'Most capable Gemini model with deep reasoning, 1M context, vision, and tool use.'
-            },
             {
                 id: 'gemini-2.0-flash',
                 displayName: 'Gemini 2.0 Flash',
@@ -148,7 +115,7 @@ export class HubDatabase {
                 },
                 isCustom: false,
                 isEnabled: true,
-                description: 'Production-stable fast model with 1M context, vision, and tool calling.'
+                description: 'Official production-stable Gemini model with 1M token context, vision, and tool calling.'
             },
             {
                 id: 'gemini-1.5-flash',
@@ -165,7 +132,24 @@ export class HubDatabase {
                 },
                 isCustom: false,
                 isEnabled: true,
-                description: 'Stable, widely-available Gemini model. Good fallback choice.'
+                description: 'Widely-available workhorse model with high speed and multimodal capabilities.'
+            },
+            {
+                id: 'gemini-1.5-pro',
+                displayName: 'Gemini 1.5 Pro',
+                providerId: 'google-gemini',
+                capabilities: {
+                    supportsStreaming: true,
+                    supportsVision: true,
+                    supportsTools: true,
+                    supportsJsonMode: true,
+                    supportsReasoningContent: false,
+                    maxContextTokens: 2097152,
+                    maxOutputTokens: 8192
+                },
+                isCustom: false,
+                isEnabled: true,
+                description: 'Frontier reasoning model with 2M token context, advanced coding intelligence, and multimodal support.'
             },
             {
                 id: 'deepseek-chat',
@@ -222,14 +206,14 @@ export class HubDatabase {
 
             if (parsed.models && Array.isArray(parsed.models)) {
                 for (const m of parsed.models) {
-                    // Migrate deprecated model IDs on load
+                    // Migrate deprecated or invalid preview model IDs on load
                     const replacement = HubDatabase.DEPRECATED_MODEL_IDS[m.id];
-                    if (replacement && replacement !== m.id) {
-                        const freshSeed = Array.from(this.models.values()).find(s => s.id === replacement);
+                    if (replacement || m.id.startsWith('gemini-2.5') || m.id.startsWith('gemini-3.')) {
+                        const targetId = replacement || 'gemini-2.0-flash';
+                        const freshSeed = Array.from(this.models.values()).find(s => s.id === targetId);
                         if (freshSeed) {
                             this.models.set(freshSeed.id, freshSeed);
                         }
-                        // Skip persisting the deprecated record
                         continue;
                     }
                     this.models.set(m.id, m);

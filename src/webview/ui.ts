@@ -616,7 +616,7 @@ export function getWebviewHtml(): string {
             fallbackConfig: { enabled: true, priorityOrder: ['google-gemini', 'deepseek'], maxRetriesPerProvider: 2, circuitBreakerThreshold: 3 },
             messages: [],
             activeProviderId: 'google-gemini',
-            activeModelId: 'gemini-2.5-flash-preview-05-20',
+            activeModelId: 'gemini-2.0-flash',
             currentRequestId: null,
             modelUsage: [],
             totalTokens: 0,

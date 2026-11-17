@@ -21,7 +21,7 @@ export class GatewayRouter {
     private diffEngine?: DiffEngine;
     private messages: ChatMessage[] = [];
     private activeProviderId = 'google-gemini';
-    private activeModelId = 'gemini-2.5-flash-preview-05-20';
+    private activeModelId = 'gemini-2.0-flash';
     private activeAbortControllers: Map<string, AbortController> = new Map();
 
     constructor(
