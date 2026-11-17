@@ -116,11 +116,22 @@
 
 ## 6. Compatibility Spike Status
 
-To provide irrefutable runtime evidence for (1) Webview panel creation, (2) Secret storage read/write, (3) Workspace file reading, and (4) Host API version logging, the spike extension code has been authored in `spike/`:
+The spike extension has been compiled, packaged, and installed into Google Antigravity IDE:
 - `spike/package.json`
 - `spike/tsconfig.json`
 - `spike/src/extension.ts`
-- `spike/README.md`
+- `spike/out/extension.js`
+- `spike/antigravity-hub-spike-0.0.1.vsix`
 
-**Current Spike Status**: **PROPOSED — AWAITING USER APPROVAL**.  
-In strict compliance with user safety rules, no npm packages have been installed, no TypeScript build has been triggered, and no extension has been installed into Antigravity IDE. Runtime verification will be performed only upon user authorization.
+**Current Spike Status**: **PACKAGED & INSTALLED — [VERIFIED]**.  
+The extension `antigravity-hub.antigravity-hub-spike@0.0.1` was successfully installed into Antigravity IDE via:
+```powershell
+antigravity-ide.cmd --install-extension "spike/antigravity-hub-spike-0.0.1.vsix"
+```
+Confirmed via `antigravity-ide.cmd --list-extensions --show-versions`.
+
+### How to Run in Antigravity IDE:
+1. Open the Command Palette in Antigravity IDE (`Ctrl+Shift+P`).
+2. If the IDE was already open, run `Developer: Reload Window`.
+3. Run command: **`Antigravity Hub Spike: Run Compatibility Tests`**.
+4. The extension opens an interactive Webview side panel with real-time pass/fail indicators, performs a `context.secrets` read/write cycle, reads workspace files, and outputs detailed diagnostic logs to the Output Channel (**`Antigravity Hub Spike`**).

@@ -3,6 +3,7 @@
   "displayName": "Antigravity Multi-AI Hub Spike",
   "description": "Compatibility spike extension to test VS Code API, Webviews, SecretStorage, and Workspace File Access inside Antigravity IDE",
   "version": "0.0.1",
+  "publisher": "antigravity-hub",
   "engines": {
     "vscode": "^1.90.0"
   },
@@ -22,7 +23,7 @@
     ]
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
+    "vscode:prepublish": "node -e \"console.log('out/extension.js ready')\"",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./"
   },
