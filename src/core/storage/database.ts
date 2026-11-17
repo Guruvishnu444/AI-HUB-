@@ -89,10 +89,18 @@ export class HubDatabase {
         this.providers.set(deepseek.id, deepseek);
     }
 
+    // Map of deprecated model IDs to their current replacements
+    private static readonly DEPRECATED_MODEL_IDS: Record<string, string> = {
+        'gemini-2.5-flash':     'gemini-2.5-flash-preview-05-20',
+        'gemini-2.5-pro':       'gemini-2.5-pro-preview-06-05',
+        'gemini-2.0-flash':     'gemini-2.0-flash',   // still active, keep same
+        'gemini-3.8-flash':     'gemini-2.5-flash-preview-05-20'  // Google error message alias
+    };
+
     private seedDefaultModels(): void {
         const defaultModels: ModelMetadata[] = [
             {
-                id: 'gemini-2.5-flash',
+                id: 'gemini-2.5-flash-preview-05-20',
                 displayName: 'Gemini 2.5 Flash',
                 providerId: 'google-gemini',
                 capabilities: {
@@ -102,14 +110,14 @@ export class HubDatabase {
                     supportsJsonMode: true,
                     supportsReasoningContent: true,
                     maxContextTokens: 1048576,
-                    maxOutputTokens: 8192
+                    maxOutputTokens: 65536
                 },
                 isCustom: false,
                 isEnabled: true,
-                description: 'Fast, multimodal workhorse model with 1M context window and reasoning budget.'
+                description: 'Fast multimodal model with 1M context window, vision, tools, and adaptive thinking budget.'
             },
             {
-                id: 'gemini-2.5-pro',
+                id: 'gemini-2.5-pro-preview-06-05',
                 displayName: 'Gemini 2.5 Pro',
                 providerId: 'google-gemini',
                 capabilities: {
@@ -118,12 +126,12 @@ export class HubDatabase {
                     supportsTools: true,
                     supportsJsonMode: true,
                     supportsReasoningContent: true,
-                    maxContextTokens: 2097152,
-                    maxOutputTokens: 8192
+                    maxContextTokens: 1048576,
+                    maxOutputTokens: 65536
                 },
                 isCustom: false,
                 isEnabled: true,
-                description: 'Frontier reasoning model with 2M token context, high coding intelligence, and multimodal support.'
+                description: 'Most capable Gemini model with deep reasoning, 1M context, vision, and tool use.'
             },
             {
                 id: 'gemini-2.0-flash',
@@ -134,13 +142,30 @@ export class HubDatabase {
                     supportsVision: true,
                     supportsTools: true,
                     supportsJsonMode: true,
-                    supportsReasoningContent: true,
+                    supportsReasoningContent: false,
                     maxContextTokens: 1048576,
                     maxOutputTokens: 8192
                 },
                 isCustom: false,
                 isEnabled: true,
-                description: 'High-speed model optimized for real-time coding tasks and tool use.'
+                description: 'Production-stable fast model with 1M context, vision, and tool calling.'
+            },
+            {
+                id: 'gemini-1.5-flash',
+                displayName: 'Gemini 1.5 Flash',
+                providerId: 'google-gemini',
+                capabilities: {
+                    supportsStreaming: true,
+                    supportsVision: true,
+                    supportsTools: true,
+                    supportsJsonMode: true,
+                    supportsReasoningContent: false,
+                    maxContextTokens: 1048576,
+                    maxOutputTokens: 8192
+                },
+                isCustom: false,
+                isEnabled: true,
+                description: 'Stable, widely-available Gemini model. Good fallback choice.'
             },
             {
                 id: 'deepseek-chat',
@@ -197,6 +222,16 @@ export class HubDatabase {
 
             if (parsed.models && Array.isArray(parsed.models)) {
                 for (const m of parsed.models) {
+                    // Migrate deprecated model IDs on load
+                    const replacement = HubDatabase.DEPRECATED_MODEL_IDS[m.id];
+                    if (replacement && replacement !== m.id) {
+                        const freshSeed = Array.from(this.models.values()).find(s => s.id === replacement);
+                        if (freshSeed) {
+                            this.models.set(freshSeed.id, freshSeed);
+                        }
+                        // Skip persisting the deprecated record
+                        continue;
+                    }
                     this.models.set(m.id, m);
                 }
             }

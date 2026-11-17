@@ -1,0 +1,24 @@
+# Source TypeScript (compiled output ships instead)
+src/
+tsconfig.json
+
+# Dev tooling
+scripts/
+.gitignore
+.gitattributes
+
+# Spike / test probe
+spike/
+
+# Docs (reduce VSIX size; keep README, CHANGELOG, LICENSE)
+docs/
+
+# Node
+node_modules/
+
+# Source maps (optional: comment out to keep for debugging)
+out/**/*.map
+
+# Misc
+.vscode/
+*.vsix

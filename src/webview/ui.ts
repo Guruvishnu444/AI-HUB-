@@ -490,7 +490,7 @@ export function getWebviewHtml(): string {
             fallbackConfig: { enabled: true, priorityOrder: ['google-gemini', 'deepseek'], maxRetriesPerProvider: 2, circuitBreakerThreshold: 3 },
             messages: [],
             activeProviderId: 'google-gemini',
-            activeModelId: 'gemini-2.5-flash',
+            activeModelId: 'gemini-2.5-flash-preview-05-20',
             currentRequestId: null,
             modelUsage: [],
             totalTokens: 0,
@@ -517,7 +517,16 @@ export function getWebviewHtml(): string {
                 case 'SYNC_STATE':
                     state.providers = msg.providers;
                     state.fallbackConfig = msg.fallbackConfig;
-                    state.messages = msg.messages;
+                    // Merge server messages: server is authoritative but preserve pending bubble
+                    {
+                        const pendingMsgs = state.messages.filter(m => m.isPending);
+                        const serverMsgMap = new Map();
+                        (msg.messages || []).forEach(m => serverMsgMap.set(m.id, m));
+                        // Rebuild: server messages + pending (not yet in server state)
+                        const merged = Array.from(serverMsgMap.values());
+                        pendingMsgs.forEach(p => { if (!serverMsgMap.has(p.id)) merged.push(p); });
+                        state.messages = merged;
+                    }
                     state.activeProviderId = msg.activeProviderId || state.activeProviderId;
                     state.activeModelId = msg.activeModelId || state.activeModelId;
                     state.modelUsage = msg.modelUsage || [];
@@ -551,15 +560,32 @@ export function getWebviewHtml(): string {
                     state.currentRequestId = msg.requestId;
                     document.getElementById('send-btn').style.display = 'none';
                     document.getElementById('abort-btn').style.display = 'block';
+                    // Add a pending "thinking" bubble
+                    if (!state.messages.some(m => m.isPending)) {
+                        state.messages.push({
+                            id: 'pending_' + msg.requestId,
+                            role: 'assistant',
+                            content: '',
+                            providerId: msg.providerId,
+                            modelId: msg.modelId,
+                            timestamp: Date.now(),
+                            isPending: true
+                        });
+                        renderMessages();
+                    }
                     break;
 
                 case 'STREAM_END':
                     state.currentRequestId = null;
                     document.getElementById('send-btn').style.display = 'block';
                     document.getElementById('abort-btn').style.display = 'none';
+                    // Replace pending bubble with real response (no duplicate: do NOT call INIT_STATE)
                     state.messages = state.messages.filter(m => !m.isPending);
-                    state.messages.push(msg.message);
+                    if (!state.messages.some(m => m.id === msg.message.id)) {
+                        state.messages.push(msg.message);
+                    }
                     renderMessages();
+                    // Update usage stats silently without re-rendering messages
                     vscode.postMessage({ type: 'INIT_STATE' });
                     break;
 

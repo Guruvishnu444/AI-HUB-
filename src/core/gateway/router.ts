@@ -15,7 +15,7 @@ export class GatewayRouter {
     private fallbackEngine: FallbackEngine;
     private messages: ChatMessage[] = [];
     private activeProviderId = 'google-gemini';
-    private activeModelId = 'gemini-2.5-flash';
+    private activeModelId = 'gemini-2.5-flash-preview-05-20';
     private activeAbortControllers: Map<string, AbortController> = new Map();
 
     constructor(vault: SecretVault, db: HubDatabase, registry: AdapterRegistry) {
