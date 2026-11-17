@@ -91,9 +91,10 @@ export function activate(context: vscode.ExtensionContext) {
                 }
             );
 
-            panel.webview.html = getWebviewContent(results);
+            // Mark working before generating HTML so the badge renders green PASS
             results.webviewPanelWorking = true;
             results.details.push('WebviewPanel: PASS (Successfully rendered webview panel beside editor)');
+            panel.webview.html = getWebviewContent(results);
             outputChannel.appendLine('  -> PASS: Webview panel created and HTML loaded.');
         } catch (err: any) {
             results.details.push(`WebviewPanel: ERROR (${err?.message || err})`);

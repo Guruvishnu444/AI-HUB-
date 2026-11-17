@@ -1,0 +1,68 @@
+{
+  "name": "antigravity-multi-ai-hub",
+  "displayName": "Antigravity Multi-AI Hub",
+  "description": "Companion multi-provider AI coding assistant beside Google Antigravity IDE with manual model selection and resilient fallback.",
+  "version": "0.1.0",
+  "publisher": "antigravity-hub",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/antigravity-hub/antigravity-multi-ai-hub"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "AI",
+    "Programming Languages",
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onView:antigravityHub.mainView",
+    "onCommand:antigravityHub.openPanel"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "antigravity-hub-sidebar",
+          "title": "Multi-AI Hub",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "antigravity-hub-sidebar": [
+        {
+          "type": "webview",
+          "id": "antigravityHub.mainView",
+          "name": "Antigravity Multi-AI Hub"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "antigravityHub.openPanel",
+        "title": "Antigravity Multi-AI Hub: Open Full Panel Beside Editor",
+        "category": "Multi-AI Hub"
+      },
+      {
+        "command": "antigravityHub.checkHealth",
+        "title": "Antigravity Multi-AI Hub: Self-Diagnostic Health Check",
+        "category": "Multi-AI Hub"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "node ./scripts/build.js",
+    "compile": "node ./scripts/build.js",
+    "watch": "node ./scripts/build.js --watch",
+    "build:vsix": "npx @vscode/vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.90.0",
+    "esbuild": "^0.24.2",
+    "typescript": "^5.4.5"
+  }
+}
