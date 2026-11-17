@@ -54,7 +54,6 @@ export function getWebviewHtml(): string {
             font-weight: 600;
             display: flex;
             align-items: center;
-            gap: 6px;
             border-bottom: 2px solid transparent;
         }
 
@@ -110,9 +109,6 @@ export function getWebviewHtml(): string {
         .card-title {
             font-size: 13px;
             font-weight: 700;
-            display: flex;
-            align-items: center;
-            gap: 8px;
         }
 
         /* Inputs and Buttons */
@@ -268,11 +264,10 @@ export function getWebviewHtml(): string {
         .btn-group {
             display: flex;
             gap: 8px;
-            margin-top: 6px;
+            margin-top: 8px;
             flex-wrap: wrap;
         }
 
-        /* Form grid */
         .form-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -296,15 +291,15 @@ export function getWebviewHtml(): string {
 </head>
 <body>
 
-    <!-- Top Tabs (Symbols only, No Emojis) -->
+    <!-- Top Tabs (Clean Plain Text, No Emojis, No Symbols) -->
     <div class="nav-tabs">
-        <button class="tab-btn active" onclick="switchTab('chat')">[ &gt; ] Chat &amp; Routing</button>
-        <button class="tab-btn" onclick="switchTab('providers')">[ + ] Provider Manager</button>
-        <button class="tab-btn" onclick="switchTab('fallback')">[ # ] Fallback Rules</button>
-        <button class="tab-btn" onclick="switchTab('usage')">[ = ] Usage &amp; Audit</button>
+        <button class="tab-btn active" onclick="switchTab('chat')">Chat and Routing</button>
+        <button class="tab-btn" onclick="switchTab('providers')">Provider Manager</button>
+        <button class="tab-btn" onclick="switchTab('fallback')">Fallback Rules</button>
+        <button class="tab-btn" onclick="switchTab('usage')">Usage and Audit</button>
     </div>
 
-    <!-- TAB 1: CHAT & MODEL SELECTOR -->
+    <!-- TAB 1: CHAT AND MODEL SELECTOR -->
     <div id="pane-chat" class="tab-pane active">
         <div class="chat-container">
             <!-- Model Selection Bar -->
@@ -314,13 +309,13 @@ export function getWebviewHtml(): string {
                     <select id="model-selector" onchange="onModelChange()"></select>
                 </div>
                 <div id="model-badges" style="display:flex; gap:6px; align-items:center; margin-top:14px;"></div>
-                <button class="secondary" style="margin-top:14px;" onclick="clearChat()">[ Clear History ]</button>
+                <button class="secondary" style="margin-top:14px;" onclick="clearChat()">Clear History</button>
             </div>
 
             <!-- Fallback Status Alert -->
             <div id="fallback-status-banner" style="display:none; margin-bottom:8px;" class="card">
                 <div style="display:flex; align-items:center; gap:8px;">
-                    <span class="badge badge-amber">[ FALLBACK ACTIVE ]</span>
+                    <span class="badge badge-amber">FALLBACK ACTIVE</span>
                     <span id="fallback-status-text" style="font-size:11.5px;"></span>
                 </div>
             </div>
@@ -329,7 +324,7 @@ export function getWebviewHtml(): string {
             <div id="chat-messages" class="chat-messages">
                 <div style="text-align:center; opacity:0.6; padding:30px 10px;">
                     <p style="font-size:14px; font-weight:600; margin-bottom:4px;">Antigravity Multi-AI Hub</p>
-                    <p style="font-size:12px;">Type your message below. The chat history will display exactly what was sent and the received reply.</p>
+                    <p style="font-size:12px;">Type your message below. Every sent prompt and its received response will appear here.</p>
                 </div>
             </div>
 
@@ -339,8 +334,8 @@ export function getWebviewHtml(): string {
                 <div class="chat-action-bar">
                     <span id="char-counter" style="font-size:11px; opacity:0.6;">Ready</span>
                     <div style="display:flex; gap:8px;">
-                        <button id="abort-btn" class="danger" style="display:none;" onclick="abortPrompt()">[ Stop ]</button>
-                        <button id="send-btn" onclick="sendPrompt()">[ Send Prompt ]</button>
+                        <button id="abort-btn" class="danger" style="display:none;" onclick="abortPrompt()">Stop</button>
+                        <button id="send-btn" onclick="sendPrompt()">Send Prompt</button>
                     </div>
                 </div>
             </div>
@@ -352,45 +347,45 @@ export function getWebviewHtml(): string {
         <!-- Security Notice -->
         <div class="card">
             <div class="card-header">
-                <span class="card-title">&bull; Secure Credential Storage</span>
+                <span class="card-title">Secure Credential Storage</span>
                 <span class="badge badge-blue">Windows DPAPI</span>
             </div>
             <p style="font-size:11.5px; opacity:0.8; line-height:1.4;">
-                API keys are stored directly in your local <strong>Windows Credential Store</strong>.
+                API keys are stored directly in your local Windows Credential Store.
                 Keys are never logged, never committed, and never exposed in plain text.
             </p>
         </div>
 
-        <!-- Add Custom Provider & Model Form -->
+        <!-- Add Custom Provider and Model Form -->
         <div class="card" style="border:1px solid rgba(14, 99, 156, 0.5);">
             <div class="card-header">
-                <span class="card-title">[+] Add Custom Provider &amp; Model</span>
-                <span class="badge badge-gray">Universal OpenAI Protocol</span>
+                <span class="card-title">Add Custom Provider and Model</span>
+                <span class="badge badge-gray">OpenAI Compatible</span>
             </div>
             <p style="font-size:11.5px; opacity:0.8; margin-bottom:12px;">
-                Connect any other AI provider or local server (OpenAI, OpenRouter, Groq, Ollama, LM Studio, vLLM, etc.) by entering its details:
+                Connect any other AI provider or local server (OpenAI, OpenRouter, Groq, Ollama, LM Studio, vLLM) by entering its details:
             </p>
             <div class="form-grid">
                 <div>
                     <label style="font-size:11px; font-weight:600; display:block; margin-bottom:2px;">Provider Name</label>
-                    <input type="text" id="custom-provider-name" placeholder="e.g. OpenAI, OpenRouter, Groq, Ollama">
+                    <input type="text" id="custom-provider-name" placeholder="Example: OpenAI, Groq, Ollama">
                 </div>
                 <div>
                     <label style="font-size:11px; font-weight:600; display:block; margin-bottom:2px;">Base URL</label>
-                    <input type="text" id="custom-provider-url" placeholder="e.g. https://api.openai.com/v1">
+                    <input type="text" id="custom-provider-url" placeholder="Example: https://api.openai.com/v1">
                 </div>
             </div>
             <div class="form-grid">
                 <div>
-                    <label style="font-size:11px; font-weight:600; display:block; margin-bottom:2px;">Model Name &amp; ID</label>
-                    <input type="text" id="custom-model-id" placeholder="e.g. gpt-4o, llama3.3:70b, mistral-large">
+                    <label style="font-size:11px; font-weight:600; display:block; margin-bottom:2px;">Model Name and ID</label>
+                    <input type="text" id="custom-model-id" placeholder="Example: gpt-4o, llama3.3:70b, mistral-large">
                 </div>
                 <div>
                     <label style="font-size:11px; font-weight:600; display:block; margin-bottom:2px;">API Key (Leave blank if local)</label>
-                    <input type="password" id="custom-api-key" placeholder="Enter key (stored securely in Windows DPAPI)">
+                    <input type="password" id="custom-api-key" placeholder="Enter API Key">
                 </div>
             </div>
-            <button onclick="addCustomProviderAndModel()">[+ Register Provider &amp; Model ]</button>
+            <button onclick="addCustomProviderAndModel()">Register Provider and Model</button>
         </div>
 
         <!-- Registered Providers List -->
@@ -401,7 +396,7 @@ export function getWebviewHtml(): string {
     <div id="pane-fallback" class="tab-pane">
         <div class="card">
             <div class="card-header">
-                <span class="card-title">&bull; Resilient Fallback Engine</span>
+                <span class="card-title">Resilient Fallback Engine</span>
                 <label style="display:flex; align-items:center; gap:6px; font-size:12px; cursor:pointer;">
                     <input type="checkbox" id="fallback-enabled-toggle" onchange="saveFallbackConfig()"> Enable Automatic Fallback
                 </label>
@@ -417,7 +412,7 @@ export function getWebviewHtml(): string {
             </div>
 
             <div style="margin-bottom:12px;">
-                <label style="font-size:11px; font-weight:600; margin-bottom:4px; display:block;">Max Immediate Retries on 429 / 5xx</label>
+                <label style="font-size:11px; font-weight:600; margin-bottom:4px; display:block;">Max Immediate Retries on 429 and 5xx</label>
                 <input type="number" id="max-retries-input" min="0" max="5" value="2" onchange="saveFallbackConfig()" style="width:120px;">
             </div>
 
@@ -428,12 +423,12 @@ export function getWebviewHtml(): string {
         </div>
     </div>
 
-    <!-- TAB 4: USAGE & AUDIT -->
+    <!-- TAB 4: USAGE AND AUDIT -->
     <div id="pane-usage" class="tab-pane">
         <!-- Overall Stats -->
         <div class="card">
             <div class="card-header">
-                <span class="card-title">&bull; Cumulative Consumption</span>
+                <span class="card-title">Cumulative Consumption</span>
             </div>
             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; text-align:center;">
                 <div style="background:rgba(0,0,0,0.25); padding:12px; border-radius:4px;">
@@ -447,10 +442,10 @@ export function getWebviewHtml(): string {
             </div>
         </div>
 
-        <!-- Separate Per-Model Usage Breakdown -->
+        <!-- Separate Per-Model Usage Breakdown Table -->
         <div class="card">
             <div class="card-header">
-                <span class="card-title">&bull; AI Models Usage Breakdown</span>
+                <span class="card-title">AI Models Usage Breakdown</span>
                 <span class="badge badge-gray" id="model-count-badge">0 Models</span>
             </div>
             <div style="overflow-x:auto;">
@@ -475,10 +470,10 @@ export function getWebviewHtml(): string {
             </div>
         </div>
 
-        <!-- Activity & Fallback Audit Log -->
+        <!-- Activity and Fallback Audit Log -->
         <div class="card">
             <div class="card-header">
-                <span class="card-title">&bull; Fallback &amp; Activity Audit Log</span>
+                <span class="card-title">Fallback and Activity Audit Log</span>
             </div>
             <div id="audit-log-container" style="max-height:220px; overflow-y:auto; font-size:11px; font-family:monospace; line-height:1.5;">
                 <p style="opacity:0.6;">No activity logged yet.</p>
@@ -538,7 +533,6 @@ export function getWebviewHtml(): string {
                     break;
 
                 case 'USER_MESSAGE_COMMITTED':
-                    // Verify if user message is already rendered, else append
                     if (!state.messages.some(m => m.id === msg.message.id)) {
                         state.messages.push(msg.message);
                         renderMessages();
@@ -547,8 +541,8 @@ export function getWebviewHtml(): string {
 
                 case 'CONNECTION_TEST_RESULT':
                     showToast(msg.result.success
-                        ? \`[✓] \${msg.providerId}: Connected (\${msg.result.latencyMs}ms, \${msg.result.modelCount || 0} models)\`
-                        : \`[✕] \${msg.providerId}: \${msg.result.errorMessage}\`
+                        ? \`Connected to \${msg.providerId} (\${msg.result.latencyMs}ms, \${msg.result.modelCount || 0} models available)\`
+                        : \`Failed connecting to \${msg.providerId}: \${msg.result.errorMessage}\`
                     );
                     renderProviders();
                     break;
@@ -563,11 +557,9 @@ export function getWebviewHtml(): string {
                     state.currentRequestId = null;
                     document.getElementById('send-btn').style.display = 'block';
                     document.getElementById('abort-btn').style.display = 'none';
-                    // Remove pending assistant placeholder if present
                     state.messages = state.messages.filter(m => !m.isPending);
                     state.messages.push(msg.message);
                     renderMessages();
-                    // Request state refresh for updated token usage
                     vscode.postMessage({ type: 'INIT_STATE' });
                     break;
 
@@ -575,14 +567,13 @@ export function getWebviewHtml(): string {
                     state.currentRequestId = null;
                     document.getElementById('send-btn').style.display = 'block';
                     document.getElementById('abort-btn').style.display = 'none';
-                    // Update pending assistant bubble with error
                     const pendingMsg = state.messages.find(m => m.isPending);
                     if (pendingMsg) {
                         pendingMsg.isPending = false;
-                        pendingMsg.content = \`[ERROR]: \${msg.error.userFacingMessage}\`;
+                        pendingMsg.content = \`Error: \${msg.error.userFacingMessage}\`;
                     }
                     renderMessages();
-                    showToast(\`[ERROR]: \${msg.error.userFacingMessage}\`);
+                    showToast(\`Error: \${msg.error.userFacingMessage}\`);
                     break;
 
                 case 'SHOW_NOTIFICATION':
@@ -607,7 +598,7 @@ export function getWebviewHtml(): string {
             allModels.forEach(m => {
                 const opt = document.createElement('option');
                 opt.value = \`\${m.providerId}::\${m.id}\`;
-                opt.textContent = \`[\${m.providerName}] \${m.displayName} (\${m.id})\`;
+                opt.textContent = \`\${m.providerName} - \${m.displayName} (\${m.id})\`;
                 if (m.providerId === state.activeProviderId && m.id === state.activeModelId) {
                     opt.selected = true;
                 }
@@ -631,11 +622,11 @@ export function getWebviewHtml(): string {
             badges.innerHTML = '';
             if (model) {
                 const caps = model.capabilities;
-                if (caps.supportsVision) badges.innerHTML += '<span class="badge badge-blue">[Vision]</span>';
-                if (caps.supportsReasoningContent) badges.innerHTML += '<span class="badge badge-amber">[Reasoning]</span>';
-                if (caps.supportsTools) badges.innerHTML += '<span class="badge badge-green">[Tools]</span>';
+                if (caps.supportsVision) badges.innerHTML += '<span class="badge badge-blue">Vision</span>';
+                if (caps.supportsReasoningContent) badges.innerHTML += '<span class="badge badge-amber">Reasoning</span>';
+                if (caps.supportsTools) badges.innerHTML += '<span class="badge badge-green">Tools</span>';
                 const ctxK = Math.round(caps.maxContextTokens / 1024);
-                badges.innerHTML += \`<span class="badge badge-gray">[\${ctxK}k Ctx]</span>\`;
+                badges.innerHTML += \`<span class="badge badge-gray">\${ctxK}k Ctx</span>\`;
             }
         }
 
@@ -648,22 +639,22 @@ export function getWebviewHtml(): string {
                 card.className = 'card';
                 card.innerHTML = \`
                     <div class="card-header">
-                        <span class="card-title">&bull; \${escapeHtml(p.config.name)} (\${p.config.id})</span>
+                        <span class="card-title">\${escapeHtml(p.config.name)} (\${p.config.id})</span>
                         <span class="badge \${p.isKeyConfigured ? 'badge-green' : 'badge-red'}">
-                            \${p.isKeyConfigured ? '[KEY STORED]' : '[NO KEY]'}
+                            \${p.isKeyConfigured ? 'KEY STORED' : 'NO KEY CONFIGURED'}
                         </span>
                     </div>
                     <div style="font-size:11px; opacity:0.75; margin-bottom:6px;">
-                        Base URL: <code>\${escapeHtml(p.config.baseUrl)}</code> | Models: \${p.models.length}
+                        Endpoint: <code>\${escapeHtml(p.config.baseUrl)}</code> | Models: \${p.models.length}
                     </div>
                     <div style="display:flex; gap:8px;">
-                        <input type="password" id="key-input-\${p.config.id}" placeholder="\${p.isKeyConfigured ? '•••••••••••••••• (Key Configured)' : 'Enter API Key...'}" style="flex:1;">
-                        <button onclick="saveKey('\${p.config.id}')">[ Save Key ]</button>
-                        \${p.isKeyConfigured ? \`<button class="danger" onclick="deleteKey('\${p.config.id}')">[ Delete ]</button>\` : ''}
+                        <input type="password" id="key-input-\${p.config.id}" placeholder="\${p.isKeyConfigured ? 'Key saved securely in Windows DPAPI' : 'Paste API Key here...'}" style="flex:1;">
+                        <button onclick="saveKey('\${p.config.id}')">Save Key</button>
+                        \${p.isKeyConfigured ? \`<button class="danger" onclick="deleteKey('\${p.config.id}')">Delete Key</button>\` : ''}
                     </div>
                     <div class="btn-group">
-                        <button class="secondary" onclick="testConnection('\${p.config.id}')">[ Ping Connection ]</button>
-                        <button class="secondary" onclick="discoverModels('\${p.config.id}')">[ Discover Models ]</button>
+                        <button class="secondary" onclick="testConnection('\${p.config.id}')">Ping Connection</button>
+                        <button class="secondary" onclick="discoverModels('\${p.config.id}')">Discover Models (\${p.models.length})</button>
                     </div>
                 \`;
                 container.appendChild(card);
@@ -677,15 +668,15 @@ export function getWebviewHtml(): string {
             const apiKey = document.getElementById('custom-api-key').value.trim();
 
             if (!name) {
-                showToast('[✕] Please enter a provider name.');
+                showToast('Please enter a provider name.');
                 return;
             }
             if (!url) {
-                showToast('[✕] Please enter a valid base URL.');
+                showToast('Please enter a valid base URL.');
                 return;
             }
             if (!modelId) {
-                showToast('[✕] Please enter a model name or ID.');
+                showToast('Please enter a model name or ID.');
                 return;
             }
 
@@ -726,7 +717,6 @@ export function getWebviewHtml(): string {
                 apiKey
             });
 
-            // Clear inputs
             document.getElementById('custom-provider-name').value = '';
             document.getElementById('custom-provider-url').value = '';
             document.getElementById('custom-model-id').value = '';
@@ -745,13 +735,13 @@ export function getWebviewHtml(): string {
             if (pIds.length >= 2) {
                 const opt1 = document.createElement('option');
                 opt1.value = pIds.join(',');
-                opt1.textContent = pIds.map((id, idx) => \`\${idx + 1}. \${id}\`).join('  ->  ');
+                opt1.textContent = pIds.map((id, idx) => \`\${idx + 1}. \${id}\`).join(' then ');
                 select.appendChild(opt1);
 
                 const reversed = [...pIds].reverse();
                 const opt2 = document.createElement('option');
                 opt2.value = reversed.join(',');
-                opt2.textContent = reversed.map((id, idx) => \`\${idx + 1}. \${id}\`).join('  ->  ');
+                opt2.textContent = reversed.map((id, idx) => \`\${idx + 1}. \${id}\`).join(' then ');
                 select.appendChild(opt2);
             }
         }
@@ -777,7 +767,7 @@ export function getWebviewHtml(): string {
         function renderMessages() {
             const container = document.getElementById('chat-messages');
             if (state.messages.length === 0) {
-                container.innerHTML = '<div style="text-align:center; opacity:0.6; padding:30px 10px;"><p style="font-size:14px; font-weight:600;">Antigravity Multi-AI Hub</p><p style="font-size:12px;">Ready for prompts. Every sent message and its received reply will be logged here.</p></div>';
+                container.innerHTML = '<div style="text-align:center; opacity:0.6; padding:30px 10px;"><p style="font-size:14px; font-weight:600;">Antigravity Multi-AI Hub</p><p style="font-size:12px;">Type your message below. Every sent prompt and its received response will appear here.</p></div>';
                 return;
             }
 
@@ -792,17 +782,17 @@ export function getWebviewHtml(): string {
                 if (m.role === 'user') {
                     headerHtml = \`
                         <div class="message-header">
-                            <span class="role-tag" style="color: #4fc1ff;">[ USER ] (You)</span>
+                            <span class="role-tag" style="color: #4fc1ff;">USER (You)</span>
                             <span style="opacity:0.6; font-size:10.5px;">\${timeStr}</span>
                         </div>
                     \`;
                 } else {
                     const fallbackTag = m.fallbackOccurred
-                        ? \`<span class="badge badge-amber" style="margin-left:6px;">[FELL BACK from \${m.originalProviderId}]</span>\`
+                        ? \`<span class="badge badge-amber" style="margin-left:6px;">FELL BACK from \${m.originalProviderId}</span>\`
                         : '';
                     headerHtml = \`
                         <div class="message-header">
-                            <span class="role-tag" style="color: #9cdcfe;">[ AI ] (\${escapeHtml(m.providerId || '')} / \${escapeHtml(m.modelId || '')}) \${fallbackTag}</span>
+                            <span class="role-tag" style="color: #9cdcfe;">AI (\${escapeHtml(m.providerId || '')} / \${escapeHtml(m.modelId || '')}) \${fallbackTag}</span>
                             <span style="opacity:0.6; font-size:10.5px;">\${timeStr}</span>
                         </div>
                     \`;
@@ -812,7 +802,7 @@ export function getWebviewHtml(): string {
                 if (m.reasoningContent) {
                     reasoningHtml = \`
                         <div class="reasoning-box">
-                            <div class="reasoning-title">[ Reasoning / Chain-of-Thought ]</div>
+                            <div class="reasoning-title">Reasoning / Chain-of-Thought</div>
                             <div>\${escapeHtml(m.reasoningContent)}</div>
                         </div>
                     \`;
@@ -820,7 +810,7 @@ export function getWebviewHtml(): string {
 
                 let contentHtml = '';
                 if (m.isPending) {
-                    contentHtml = '<div style="opacity:0.7; font-style:italic;">[ Generating response... ]</div>';
+                    contentHtml = '<div style="opacity:0.7; font-style:italic;">Generating response...</div>';
                 } else {
                     contentHtml = \`<div>\${escapeHtml(m.content)}</div>\`;
                 }
@@ -869,7 +859,7 @@ export function getWebviewHtml(): string {
                     const line = document.createElement('div');
                     line.style.padding = '3px 0';
                     line.style.borderBottom = '1px solid rgba(255,255,255,0.03)';
-                    line.innerHTML = \`<span style="opacity:0.5;">[\${timeStr}]</span> <span class="badge \${getLogBadgeClass(entry.eventType)}">[\${entry.eventType}]</span> <strong>\${escapeHtml(entry.providerId)}</strong>: \${escapeHtml(entry.details)}\`;
+                    line.innerHTML = \`<span style="opacity:0.5;">\${timeStr}</span> <span class="badge \${getLogBadgeClass(entry.eventType)}">\${entry.eventType}</span> <strong>\${escapeHtml(entry.providerId)}</strong>: \${escapeHtml(entry.details)}\`;
                     logContainer.appendChild(line);
                 });
             }

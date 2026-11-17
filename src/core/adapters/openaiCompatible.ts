@@ -2,6 +2,7 @@ import { BaseProviderAdapter } from './base';
 import { ProviderConfig, ConnectionTestResult } from '../types/provider';
 import { ModelMetadata } from '../types/model';
 import { ChatCompletionRequest, ChatCompletionResponse, StreamChunk } from '../types/chat';
+import { cleanApiKey } from '../storage/secretVault';
 
 export class OpenAICompatibleAdapter extends BaseProviderAdapter {
     public readonly providerId: string;
@@ -17,10 +18,11 @@ export class OpenAICompatibleAdapter extends BaseProviderAdapter {
         return `${base}/${cleanPath}`;
     }
 
-    public async testConnection(apiKey: string): Promise<ConnectionTestResult> {
+    public async testConnection(rawKey: string): Promise<ConnectionTestResult> {
+        const apiKey = cleanApiKey(rawKey);
         const start = Date.now();
         try {
-            const url = this.getEndpointUrl('/models');
+            let url = this.getEndpointUrl('/models');
             const headers: Record<string, string> = {
                 'Content-Type': 'application/json'
             };
@@ -28,11 +30,26 @@ export class OpenAICompatibleAdapter extends BaseProviderAdapter {
                 headers['Authorization'] = `Bearer ${apiKey}`;
             }
 
-            const response = await fetch(url, { method: 'GET', headers });
+            let response = await fetch(url, { method: 'GET', headers });
+
+            // If 404, try with /v1/models if base didn't include /v1
+            if (response.status === 404 && !this.config.baseUrl.includes('/v1')) {
+                url = this.getEndpointUrl('/v1/models');
+                response = await fetch(url, { method: 'GET', headers });
+            }
 
             if (!response.ok) {
                 const errBody = await response.text();
-                throw new Error(`HTTP ${response.status}: ${errBody}`);
+                let errMsg = `HTTP ${response.status}: ${errBody}`;
+                try {
+                    const parsed = JSON.parse(errBody);
+                    if (parsed.error && parsed.error.message) {
+                        errMsg = parsed.error.message;
+                    }
+                } catch {
+                    // keep raw
+                }
+                throw new Error(errMsg);
             }
 
             const data = (await response.json()) as any;
@@ -53,8 +70,9 @@ export class OpenAICompatibleAdapter extends BaseProviderAdapter {
         }
     }
 
-    public async discoverModels(apiKey: string): Promise<ModelMetadata[]> {
-        const url = this.getEndpointUrl('/models');
+    public async discoverModels(rawKey: string): Promise<ModelMetadata[]> {
+        const apiKey = cleanApiKey(rawKey);
+        let url = this.getEndpointUrl('/models');
         const headers: Record<string, string> = {
             'Content-Type': 'application/json'
         };
@@ -62,7 +80,12 @@ export class OpenAICompatibleAdapter extends BaseProviderAdapter {
             headers['Authorization'] = `Bearer ${apiKey}`;
         }
 
-        const response = await fetch(url, { method: 'GET', headers });
+        let response = await fetch(url, { method: 'GET', headers });
+
+        if (response.status === 404 && !this.config.baseUrl.includes('/v1')) {
+            url = this.getEndpointUrl('/v1/models');
+            response = await fetch(url, { method: 'GET', headers });
+        }
 
         if (!response.ok) {
             const errBody = await response.text();
@@ -95,11 +118,12 @@ export class OpenAICompatibleAdapter extends BaseProviderAdapter {
     }
 
     public async sendChatCompletion(
-        apiKey: string,
+        rawKey: string,
         request: ChatCompletionRequest,
         abortSignal?: AbortSignal
     ): Promise<ChatCompletionResponse> {
-        const url = this.getEndpointUrl('/chat/completions');
+        const apiKey = cleanApiKey(rawKey);
+        let url = this.getEndpointUrl('/chat/completions');
 
         const formattedMessages = request.messages.map(m => ({
             role: m.role,
@@ -132,6 +156,16 @@ export class OpenAICompatibleAdapter extends BaseProviderAdapter {
                 body: JSON.stringify(payload),
                 signal: abortSignal
             });
+
+            if (response.status === 404 && !this.config.baseUrl.includes('/v1')) {
+                url = this.getEndpointUrl('/v1/chat/completions');
+                response = await fetch(url, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify(payload),
+                    signal: abortSignal
+                });
+            }
         } catch (err) {
             throw this.sanitizeError(err, apiKey);
         }
@@ -167,11 +201,12 @@ export class OpenAICompatibleAdapter extends BaseProviderAdapter {
     }
 
     public async *streamChatCompletion(
-        apiKey: string,
+        rawKey: string,
         request: ChatCompletionRequest,
         abortSignal?: AbortSignal
     ): AsyncIterable<StreamChunk> {
-        const url = this.getEndpointUrl('/chat/completions');
+        const apiKey = cleanApiKey(rawKey);
+        let url = this.getEndpointUrl('/chat/completions');
 
         const formattedMessages = request.messages.map(m => ({
             role: m.role,
@@ -204,6 +239,16 @@ export class OpenAICompatibleAdapter extends BaseProviderAdapter {
                 body: JSON.stringify(payload),
                 signal: abortSignal
             });
+
+            if (response.status === 404 && !this.config.baseUrl.includes('/v1')) {
+                url = this.getEndpointUrl('/v1/chat/completions');
+                response = await fetch(url, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify(payload),
+                    signal: abortSignal
+                });
+            }
         } catch (err) {
             throw this.sanitizeError(err, apiKey);
         }

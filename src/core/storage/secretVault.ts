@@ -1,5 +1,23 @@
 import * as vscode from 'vscode';
 
+export function cleanApiKey(raw: string): string {
+    if (!raw) return '';
+    let key = raw.trim();
+    // If user pasted key assignment from .env (e.g. KEY=sk-...)
+    if (key.includes('=')) {
+        key = key.split('=').pop()!.trim();
+    }
+    // If user pasted with "Bearer " prefix
+    if (key.toLowerCase().startsWith('bearer ')) {
+        key = key.substring(7).trim();
+    }
+    // Strip surrounding quotes
+    key = key.replace(/^["'`]|["'`]$/g, '').trim();
+    // Strip trailing semicolons or commas
+    key = key.replace(/[;,]$/, '').trim();
+    return key;
+}
+
 /**
  * SecretVault
  * Wraps VS Code's native SecretStorage API, backed by Windows DPAPI / Credential Vault.
@@ -18,15 +36,16 @@ export class SecretVault {
     }
 
     public async saveKey(providerId: string, apiKey: string): Promise<void> {
-        const trimmed = apiKey.trim();
-        if (!trimmed) {
+        const cleaned = cleanApiKey(apiKey);
+        if (!cleaned) {
             throw new Error('Cannot save an empty API key.');
         }
-        await this.secrets.store(this.makeKey(providerId), trimmed);
+        await this.secrets.store(this.makeKey(providerId), cleaned);
     }
 
     public async getKey(providerId: string): Promise<string | undefined> {
-        return await this.secrets.get(this.makeKey(providerId));
+        const raw = await this.secrets.get(this.makeKey(providerId));
+        return raw ? cleanApiKey(raw) : undefined;
     }
 
     public async hasKey(providerId: string): Promise<boolean> {

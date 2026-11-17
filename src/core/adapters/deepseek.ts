@@ -2,6 +2,7 @@ import { BaseProviderAdapter } from './base';
 import { ProviderConfig, ConnectionTestResult } from '../types/provider';
 import { ModelMetadata } from '../types/model';
 import { ChatCompletionRequest, ChatCompletionResponse, StreamChunk } from '../types/chat';
+import { cleanApiKey } from '../storage/secretVault';
 
 export class DeepSeekAdapter extends BaseProviderAdapter {
     public readonly providerId = 'deepseek';
@@ -10,11 +11,12 @@ export class DeepSeekAdapter extends BaseProviderAdapter {
         super(config);
     }
 
-    public async testConnection(apiKey: string): Promise<ConnectionTestResult> {
+    public async testConnection(rawKey: string): Promise<ConnectionTestResult> {
+        const apiKey = cleanApiKey(rawKey);
         const start = Date.now();
         try {
-            const url = `${this.config.baseUrl}/models`;
-            const response = await fetch(url, {
+            let url = `${this.config.baseUrl}/models`;
+            let response = await fetch(url, {
                 method: 'GET',
                 headers: {
                     'Authorization': `Bearer ${apiKey}`,
@@ -22,9 +24,30 @@ export class DeepSeekAdapter extends BaseProviderAdapter {
                 }
             });
 
+            // If base/models 404s, try /v1/models
+            if (response.status === 404 && !this.config.baseUrl.endsWith('/v1')) {
+                url = `${this.config.baseUrl}/v1/models`;
+                response = await fetch(url, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${apiKey}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+            }
+
             if (!response.ok) {
                 const errBody = await response.text();
-                throw new Error(`HTTP ${response.status}: ${errBody}`);
+                let errMsg = `HTTP ${response.status}: ${errBody}`;
+                try {
+                    const parsed = JSON.parse(errBody);
+                    if (parsed.error && parsed.error.message) {
+                        errMsg = parsed.error.message;
+                    }
+                } catch {
+                    // keep raw
+                }
+                throw new Error(errMsg);
             }
 
             const data = (await response.json()) as any;
@@ -45,15 +68,27 @@ export class DeepSeekAdapter extends BaseProviderAdapter {
         }
     }
 
-    public async discoverModels(apiKey: string): Promise<ModelMetadata[]> {
-        const url = `${this.config.baseUrl}/models`;
-        const response = await fetch(url, {
+    public async discoverModels(rawKey: string): Promise<ModelMetadata[]> {
+        const apiKey = cleanApiKey(rawKey);
+        let url = `${this.config.baseUrl}/models`;
+        let response = await fetch(url, {
             method: 'GET',
             headers: {
                 'Authorization': `Bearer ${apiKey}`,
                 'Content-Type': 'application/json'
             }
         });
+
+        if (response.status === 404 && !this.config.baseUrl.endsWith('/v1')) {
+            url = `${this.config.baseUrl}/v1/models`;
+            response = await fetch(url, {
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${apiKey}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+        }
 
         if (!response.ok) {
             const errBody = await response.text();
@@ -104,7 +139,6 @@ export class DeepSeekAdapter extends BaseProviderAdapter {
             stream
         };
 
-        // deepseek-reasoner ignores or errors on temperature/top_p
         if (!isReasoner) {
             if (request.temperature !== undefined) payload.temperature = request.temperature;
             if (request.topP !== undefined) payload.top_p = request.topP;
@@ -117,11 +151,12 @@ export class DeepSeekAdapter extends BaseProviderAdapter {
     }
 
     public async sendChatCompletion(
-        apiKey: string,
+        rawKey: string,
         request: ChatCompletionRequest,
         abortSignal?: AbortSignal
     ): Promise<ChatCompletionResponse> {
-        const url = `${this.config.baseUrl}/chat/completions`;
+        const apiKey = cleanApiKey(rawKey);
+        let url = `${this.config.baseUrl}/chat/completions`;
         const payload = this.formatDeepSeekPayload(request, false);
 
         let response: Response;
@@ -135,6 +170,19 @@ export class DeepSeekAdapter extends BaseProviderAdapter {
                 body: JSON.stringify(payload),
                 signal: abortSignal
             });
+
+            if (response.status === 404 && !this.config.baseUrl.endsWith('/v1')) {
+                url = `${this.config.baseUrl}/v1/chat/completions`;
+                response = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${apiKey}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(payload),
+                    signal: abortSignal
+                });
+            }
         } catch (err) {
             throw this.sanitizeError(err, apiKey);
         }
@@ -170,11 +218,12 @@ export class DeepSeekAdapter extends BaseProviderAdapter {
     }
 
     public async *streamChatCompletion(
-        apiKey: string,
+        rawKey: string,
         request: ChatCompletionRequest,
         abortSignal?: AbortSignal
     ): AsyncIterable<StreamChunk> {
-        const url = `${this.config.baseUrl}/chat/completions`;
+        const apiKey = cleanApiKey(rawKey);
+        let url = `${this.config.baseUrl}/chat/completions`;
         const payload = this.formatDeepSeekPayload(request, true);
 
         let response: Response;
@@ -188,6 +237,19 @@ export class DeepSeekAdapter extends BaseProviderAdapter {
                 body: JSON.stringify(payload),
                 signal: abortSignal
             });
+
+            if (response.status === 404 && !this.config.baseUrl.endsWith('/v1')) {
+                url = `${this.config.baseUrl}/v1/chat/completions`;
+                response = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${apiKey}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(payload),
+                    signal: abortSignal
+                });
+            }
         } catch (err) {
             throw this.sanitizeError(err, apiKey);
         }

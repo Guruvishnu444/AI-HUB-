@@ -2,6 +2,7 @@ import { BaseProviderAdapter } from './base';
 import { ProviderConfig, ConnectionTestResult } from '../types/provider';
 import { ModelMetadata } from '../types/model';
 import { ChatCompletionRequest, ChatCompletionResponse, StreamChunk } from '../types/chat';
+import { cleanApiKey } from '../storage/secretVault';
 
 export class GeminiAdapter extends BaseProviderAdapter {
     public readonly providerId = 'google-gemini';
@@ -10,20 +11,31 @@ export class GeminiAdapter extends BaseProviderAdapter {
         super(config);
     }
 
-    public async testConnection(apiKey: string): Promise<ConnectionTestResult> {
+    public async testConnection(rawKey: string): Promise<ConnectionTestResult> {
+        const apiKey = cleanApiKey(rawKey);
         const start = Date.now();
         try {
             const url = `${this.config.baseUrl}/models?key=${encodeURIComponent(apiKey)}`;
             const response = await fetch(url, {
                 method: 'GET',
                 headers: {
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    'x-goog-api-key': apiKey
                 }
             });
 
             if (!response.ok) {
                 const errBody = await response.text();
-                throw new Error(`HTTP ${response.status}: ${errBody}`);
+                let errMsg = `HTTP ${response.status}: ${errBody}`;
+                try {
+                    const parsed = JSON.parse(errBody);
+                    if (parsed.error && parsed.error.message) {
+                        errMsg = parsed.error.message;
+                    }
+                } catch {
+                    // keep raw body
+                }
+                throw new Error(errMsg);
             }
 
             const data = (await response.json()) as any;
@@ -44,11 +56,15 @@ export class GeminiAdapter extends BaseProviderAdapter {
         }
     }
 
-    public async discoverModels(apiKey: string): Promise<ModelMetadata[]> {
+    public async discoverModels(rawKey: string): Promise<ModelMetadata[]> {
+        const apiKey = cleanApiKey(rawKey);
         const url = `${this.config.baseUrl}/models?key=${encodeURIComponent(apiKey)}`;
         const response = await fetch(url, {
             method: 'GET',
-            headers: { 'Content-Type': 'application/json' }
+            headers: {
+                'Content-Type': 'application/json',
+                'x-goog-api-key': apiKey
+            }
         });
 
         if (!response.ok) {
@@ -135,10 +151,11 @@ export class GeminiAdapter extends BaseProviderAdapter {
     }
 
     public async sendChatCompletion(
-        apiKey: string,
+        rawKey: string,
         request: ChatCompletionRequest,
         abortSignal?: AbortSignal
     ): Promise<ChatCompletionResponse> {
+        const apiKey = cleanApiKey(rawKey);
         const modelName = request.modelId.replace(/^models\//, '');
         const url = `${this.config.baseUrl}/models/${modelName}:generateContent?key=${encodeURIComponent(apiKey)}`;
         const payload = this.formatGeminiPayload(request);
@@ -147,7 +164,10 @@ export class GeminiAdapter extends BaseProviderAdapter {
         try {
             response = await fetch(url, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-goog-api-key': apiKey
+                },
                 body: JSON.stringify(payload),
                 signal: abortSignal
             });
@@ -184,10 +204,11 @@ export class GeminiAdapter extends BaseProviderAdapter {
     }
 
     public async *streamChatCompletion(
-        apiKey: string,
+        rawKey: string,
         request: ChatCompletionRequest,
         abortSignal?: AbortSignal
     ): AsyncIterable<StreamChunk> {
+        const apiKey = cleanApiKey(rawKey);
         const modelName = request.modelId.replace(/^models\//, '');
         const url = `${this.config.baseUrl}/models/${modelName}:streamGenerateContent?alt=sse&key=${encodeURIComponent(apiKey)}`;
         const payload = this.formatGeminiPayload(request);
@@ -196,7 +217,10 @@ export class GeminiAdapter extends BaseProviderAdapter {
         try {
             response = await fetch(url, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-goog-api-key': apiKey
+                },
                 body: JSON.stringify(payload),
                 signal: abortSignal
             });
