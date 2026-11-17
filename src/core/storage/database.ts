@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { ProviderConfig } from '../types/provider';
 import { ModelMetadata } from '../types/model';
-import { FallbackConfig } from '../types/ipc';
+import { FallbackConfig, ModelUsageSummary } from '../types/ipc';
 
 export interface UsageMetric {
     id: string;
@@ -281,6 +281,50 @@ export class HubDatabase {
 
     public getUsageMetrics(): UsageMetric[] {
         return [...this.usageMetrics];
+    }
+
+    public getModelUsageSummary(): ModelUsageSummary[] {
+        const summaryMap = new Map<string, ModelUsageSummary>();
+
+        for (const metric of this.usageMetrics) {
+            const key = metric.modelId;
+            let entry = summaryMap.get(key);
+            if (!entry) {
+                const modelMeta = this.getModel(metric.modelId);
+                entry = {
+                    modelId: metric.modelId,
+                    providerId: metric.providerId,
+                    displayName: modelMeta?.displayName || metric.modelId,
+                    requestCount: 0,
+                    promptTokens: 0,
+                    completionTokens: 0,
+                    totalTokens: 0,
+                    avgLatencyMs: 0,
+                    lastUsedTimestamp: 0
+                };
+                summaryMap.set(key, entry);
+            }
+
+            const currentTotalLatency = entry.avgLatencyMs * entry.requestCount + metric.latencyMs;
+            entry.requestCount += 1;
+            entry.promptTokens += metric.promptTokens;
+            entry.completionTokens += metric.completionTokens;
+            entry.totalTokens += metric.totalTokens;
+            entry.avgLatencyMs = Math.round(currentTotalLatency / entry.requestCount);
+            if (metric.timestamp > entry.lastUsedTimestamp) {
+                entry.lastUsedTimestamp = metric.timestamp;
+            }
+        }
+
+        return Array.from(summaryMap.values()).sort((a, b) => b.lastUsedTimestamp - a.lastUsedTimestamp);
+    }
+
+    public getTotalTokens(): number {
+        return this.usageMetrics.reduce((sum, m) => sum + m.totalTokens, 0);
+    }
+
+    public getTotalRequests(): number {
+        return this.usageMetrics.length;
     }
 
     public logAudit(eventType: AuditLogEntry['eventType'], providerId: string, details: string, modelId?: string): void {

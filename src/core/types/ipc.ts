@@ -18,6 +18,18 @@ export interface ProviderSummary {
     isCircuitOpen: boolean;
 }
 
+export interface ModelUsageSummary {
+    modelId: string;
+    providerId: string;
+    displayName: string;
+    requestCount: number;
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    avgLatencyMs: number;
+    lastUsedTimestamp: number;
+}
+
 /**
  * Messages sent from Webview to Extension Host
  */
@@ -27,6 +39,7 @@ export type WebviewToHostMessage =
     | { type: 'DELETE_KEY'; providerId: string }
     | { type: 'TEST_CONNECTION'; providerId: string }
     | { type: 'DISCOVER_MODELS'; providerId: string }
+    | { type: 'ADD_CUSTOM_PROVIDER'; provider: ProviderConfig; model: ModelMetadata; apiKey?: string }
     | { type: 'ADD_CUSTOM_MODEL'; model: ModelMetadata }
     | { type: 'TOGGLE_MODEL'; modelId: string; enabled: boolean }
     | { type: 'UPDATE_FALLBACK_CONFIG'; config: FallbackConfig }
@@ -48,7 +61,19 @@ export type HostToWebviewMessage =
           messages: ChatMessage[];
           activeProviderId: string;
           activeModelId: string;
+          modelUsage: ModelUsageSummary[];
+          totalTokens: number;
+          totalRequests: number;
+          auditLogs: Array<{
+              id: string;
+              timestamp: number;
+              eventType: string;
+              providerId: string;
+              modelId?: string;
+              details: string;
+          }>;
       }
+    | { type: 'USER_MESSAGE_COMMITTED'; message: ChatMessage }
     | { type: 'KEY_SAVED'; providerId: string; success: boolean }
     | { type: 'KEY_DELETED'; providerId: string }
     | { type: 'CONNECTION_TEST_RESULT'; providerId: string; result: ConnectionTestResult }

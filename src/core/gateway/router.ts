@@ -3,6 +3,7 @@ import { SecretVault } from '../storage/secretVault';
 import { HubDatabase } from '../storage/database';
 import { AdapterRegistry } from '../adapters/registry';
 import { FallbackEngine } from '../fallback/engine';
+import { OpenAICompatibleAdapter } from '../adapters/openaiCompatible';
 import { WebviewToHostMessage, HostToWebviewMessage, ProviderSummary } from '../types/ipc';
 import { ChatMessage, ChatCompletionRequest } from '../types/chat';
 import { HubError } from '../types/errors';
@@ -132,6 +133,42 @@ export class GatewayRouter {
                 break;
             }
 
+            case 'ADD_CUSTOM_PROVIDER': {
+                try {
+                    await this.db.updateProvider(msg.provider);
+                    await this.db.addOrUpdateModel(msg.model);
+
+                    if (msg.apiKey && msg.apiKey.trim()) {
+                        await this.vault.saveKey(msg.provider.id, msg.apiKey.trim());
+                    }
+
+                    // Register adapter dynamically
+                    const adapter = new OpenAICompatibleAdapter(msg.provider);
+                    this.registry.registerAdapter(adapter);
+
+                    this.db.logAudit(
+                        'KEY_CHANGE',
+                        msg.provider.id,
+                        `Added custom provider "${msg.provider.name}" with model "${msg.model.displayName}"`
+                    );
+
+                    postMessage({
+                        type: 'SHOW_NOTIFICATION',
+                        message: `Provider "${msg.provider.name}" and model "${msg.model.displayName}" added successfully.`,
+                        severity: 'info'
+                    });
+
+                    await this.syncState(postMessage);
+                } catch (err: any) {
+                    postMessage({
+                        type: 'SHOW_NOTIFICATION',
+                        message: `Failed to add provider: ${err?.message || err}`,
+                        severity: 'error'
+                    });
+                }
+                break;
+            }
+
             case 'ADD_CUSTOM_MODEL': {
                 await this.db.addOrUpdateModel(msg.model);
                 postMessage({
@@ -208,6 +245,12 @@ export class GatewayRouter {
             timestamp: Date.now()
         };
         this.messages.push(userMsg);
+
+        // Notify Webview immediately so user message is rendered at once
+        postMessage({
+            type: 'USER_MESSAGE_COMMITTED',
+            message: userMsg
+        });
 
         postMessage({
             type: 'STREAM_START',
@@ -325,7 +368,11 @@ export class GatewayRouter {
             fallbackConfig,
             messages: this.messages,
             activeProviderId: this.activeProviderId,
-            activeModelId: this.activeModelId
+            activeModelId: this.activeModelId,
+            modelUsage: this.db.getModelUsageSummary(),
+            totalTokens: this.db.getTotalTokens(),
+            totalRequests: this.db.getTotalRequests(),
+            auditLogs: this.db.getAuditLogs().slice(-50).reverse()
         });
     }
 }
