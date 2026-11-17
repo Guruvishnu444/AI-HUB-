@@ -1,0 +1,34 @@
+{
+  "name": "antigravity-hub-spike",
+  "displayName": "Antigravity Multi-AI Hub Spike",
+  "description": "Compatibility spike extension to test VS Code API, Webviews, SecretStorage, and Workspace File Access inside Antigravity IDE",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:antigravity-spike.runTests"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "antigravity-spike.runTests",
+        "title": "Antigravity Hub Spike: Run Compatibility Tests"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.90.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.4.5"
+  }
+}
