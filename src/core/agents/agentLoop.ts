@@ -47,8 +47,18 @@ export const TOOL_DEFS: ToolDef[] = [
         required: []
     },
     {
+        name: 'createFile',
+        description: 'Create a brand new file in the workspace with complete source code or text. Use this whenever the user asks to create a file, generate a new script, write a program, or build a new module (e.g., "create test.py", "make a python script", "create hello.js"). The file will be safely created in the workspace upon one-click user approval.',
+        parameters: {
+            filePath: { type: 'string', description: 'Relative path of the new file to create (e.g. "test.py", "scripts/build.py", "src/hello.js").' },
+            content: { type: 'string', description: 'The complete source code or text content to write into the new file.' },
+            description: { type: 'string', description: 'Short summary of the file being created.' }
+        },
+        required: ['filePath', 'content']
+    },
+    {
         name: 'proposeFileEdit',
-        description: 'Propose a corrected version of a file. ALWAYS read the file first. The user must approve — edits are NEVER auto-saved. Provide COMPLETE file content, not a partial diff.',
+        description: 'Propose a corrected version of an existing file. ALWAYS read the file first. The user must approve — edits are NEVER auto-saved. Provide COMPLETE file content, not a partial diff.',
         parameters: {
             filePath: { type: 'string', description: 'Relative path to the file to edit.' },
             newContent: { type: 'string', description: 'The complete updated file content (full file, not a snippet).' },
@@ -60,27 +70,36 @@ export const TOOL_DEFS: ToolDef[] = [
 
 // ─── System Prompts ───────────────────────────────────────────────────────────
 
-const DEBUGGER_SYSTEM_PROMPT = `You are an expert code debugger embedded in an IDE called Antigravity IDE.
+const DEBUGGER_SYSTEM_PROMPT = `You are an expert code debugger and software developer embedded in Antigravity IDE.
+
+Your capabilities:
+You have tools to list files (listFiles), read files (readFile), search code (searchFiles), check the active editor (getActiveFileContext), create new files (createFile), and edit existing files (proposeFileEdit).
+You CAN create new files and edit files directly in the user's workspace through these tools!
 
 Your job:
-1. IDENTIFY the root cause of the error in 1-2 sentences.
-2. USE the available tools (listFiles, readFile, searchFiles, getActiveFileContext, proposeFileEdit) to investigate the codebase.
-3. ALWAYS read the file before proposing any edit.
-4. PROPOSE exactly the minimal correct fix using proposeFileEdit with a clear description.
-5. After proposing, briefly explain what you changed and why (do not repeat the code).
+1. When asked to create a file, use the createFile tool with the filename and complete code.
+2. When asked to fix an error, IDENTIFY the root cause in 1-2 sentences.
+3. USE the available tools to inspect the codebase and read the file before proposing any edit.
+4. PROPOSE the fix using proposeFileEdit or createFile with a clear description.
+5. After calling the tool, briefly summarize what you did.
 
 Rules:
-- Never guess — always read the file first.
+- Never say you cannot create files — you HAVE the createFile tool! Use it.
+- Never guess file contents — always read the file first before editing.
 - Never propose edits to .env, secrets, or credential files.
-- Always call getActiveFileContext first if the user says "fix this" without specifying a file.
-- Produce the COMPLETE corrected file content when proposing an edit — not a partial snippet.
-- Be direct and concise. No unnecessary explanations.`;
+- Produce COMPLETE file content, not partial snippets.
+- Be direct and concise.`;
 
-const ASSISTANT_SYSTEM_PROMPT = `You are a helpful AI assistant embedded in Antigravity IDE.
-You can explore the workspace, read source files, search for patterns, and propose file edits for the user to review.
-When accessing files, always use the available tools rather than guessing file contents.
-Credential and secret files are automatically protected — you cannot access them.
-Proposed edits require explicit user approval before saving.`;
+const ASSISTANT_SYSTEM_PROMPT = `You are an AI coding assistant embedded in Antigravity IDE.
+You have direct tool access to the workspace:
+- You can create new files using the createFile tool.
+- You can read files using readFile.
+- You can explore directories using listFiles.
+- You can search the codebase using searchFiles.
+- You can propose modifications to existing files using proposeFileEdit.
+
+When the user asks you to create a program, script, or file, ALWAYS call the createFile tool with the desired relative path and the complete code. The user will be given a one-click approval button to save it to their disk.
+Never say you cannot create or edit files, because you have tools that do exactly that.`;
 
 // ─── Provider Protocol Detection ──────────────────────────────────────────────
 

@@ -377,16 +377,16 @@ export function getWebviewHtml(): string {
                     <span id="char-counter" style="font-size:11px; opacity:0.6;">Ready</span>
                     <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
                         <label style="display:flex; align-items:center; gap:5px; font-size:11px; cursor:pointer; user-select:none;">
-                            <input type="checkbox" id="agent-mode-toggle" onchange="toggleAgentMode()" style="cursor:pointer;">
-                            Agent Mode
+                            <input type="checkbox" id="agent-mode-toggle" checked onchange="toggleAgentMode()" style="cursor:pointer;">
+                            Agent Mode (File Tools Active)
                         </label>
-                        <label id="debug-mode-label" style="display:none; align-items:center; gap:5px; font-size:11px; cursor:pointer; user-select:none;">
+                        <label id="debug-mode-label" style="display:flex; align-items:center; gap:5px; font-size:11px; cursor:pointer; user-select:none;">
                             <input type="checkbox" id="debug-mode-toggle" onchange="toggleDebugMode()" style="cursor:pointer;">
                             Fix / Debug
                         </label>
-                        <button class="secondary" id="attach-error-btn" style="display:none; font-size:11px; padding:4px 8px;" onclick="attachActiveError()">Attach Active Error</button>
+                        <button class="secondary" id="attach-error-btn" style="display:inline-block; font-size:11px; padding:4px 8px;" onclick="attachActiveError()">Attach Active Error</button>
                         <button id="abort-btn" class="danger" style="display:none;" onclick="abortPrompt()">Stop</button>
-                        <button id="send-btn" onclick="sendPrompt()">Send</button>
+                        <button id="send-btn" onclick="sendPrompt()">Run Agent</button>
                     </div>
                 </div>
             </div>
@@ -399,11 +399,11 @@ export function getWebviewHtml(): string {
 
             <!-- Agent Edit Approval Panel -->
             <div id="agent-edit-panel" style="display:none; margin-top:8px; border:1px solid rgba(0, 180, 100, 0.4); border-radius:6px; background:rgba(0,0,0,0.25); padding:10px;">
-                <div style="font-weight:600; font-size:12px; margin-bottom:6px;">Agent proposes an edit — review and approve:</div>
+                <div id="agent-edit-header" style="font-weight:600; font-size:12px; margin-bottom:6px;">Review and approve:</div>
                 <div id="agent-edit-info" style="font-size:11.5px; margin-bottom:8px;"></div>
                 <div id="agent-diff-view" style="font-family:monospace; font-size:11px; white-space:pre-wrap; max-height:200px; overflow-y:auto; background:rgba(0,0,0,0.3); padding:8px; border-radius:4px; margin-bottom:8px;"></div>
                 <div style="display:flex; gap:8px;">
-                    <button onclick="approveAgentEdit()" style="background:#0e7a0e; border-color:#0e7a0e;">Approve and Save</button>
+                    <button id="agent-approve-btn" onclick="approveAgentEdit()" style="background:#0e7a0e; border-color:#0e7a0e;">Approve and Save</button>
                     <button class="danger" onclick="rejectAgentEdit()">Reject</button>
                 </div>
             </div>
@@ -652,7 +652,7 @@ export function getWebviewHtml(): string {
             fileTree: [],
             currentPreview: null,
             currentDiff: null,
-            agentMode: false,          // true = use agentic tool loop, false = normal chat
+            agentMode: true,           // true = file and code tools enabled by default
             agentDebugMode: false,     // true = inject debugger system prompt
             agentThinkingSteps: [],    // accumulated tool call steps for current agent run
             pendingAgentEdits: {}      // editId -> { filePath, originalContent, proposedContent, description }
@@ -862,26 +862,43 @@ export function getWebviewHtml(): string {
                 case 'AGENT_EDIT_PROPOSAL': {
                     state.pendingAgentEdits[msg.editId] = msg;
                     const editPanel = document.getElementById('agent-edit-panel');
+                    const editHeader = document.getElementById('agent-edit-header');
                     const editInfo = document.getElementById('agent-edit-info');
                     const diffView = document.getElementById('agent-diff-view');
+                    const approveBtn = document.getElementById('agent-approve-btn');
                     if (editPanel && editInfo && diffView) {
-                        editInfo.innerHTML = '<strong>File:</strong> ' + escapeHtml(msg.filePath) + '<br><span style="opacity:0.8;">' + escapeHtml(msg.description) + '</span>';
-                        // Inline diff: compare line by line
+                        const isNew = !msg.originalContent;
+                        if (editHeader) {
+                            editHeader.textContent = isNew ? 'Create New File — Review and Approve:' : 'Edit Existing File — Review and Approve:';
+                        }
+                        if (approveBtn) {
+                            approveBtn.textContent = isNew ? 'Approve and Create File' : 'Approve and Save';
+                        }
+                        editInfo.innerHTML = '<strong>' + (isNew ? 'New File: ' : 'File: ') + '</strong>' + escapeHtml(msg.filePath) + '<br><span style="opacity:0.8;">' + escapeHtml(msg.description) + '</span>';
+                        // Inline diff / preview: compare line by line
                         const orig = (msg.originalContent || '').split('\\n');
                         const proposed = (msg.proposedContent || '').split('\\n');
                         const diffLines = [];
-                        const maxLen = Math.max(orig.length, proposed.length);
-                        for (let i = 0; i < Math.min(maxLen, 100); i++) {
-                            const o = orig[i] !== undefined ? orig[i] : '';
-                            const p = proposed[i] !== undefined ? proposed[i] : '';
-                            if (o !== p) {
-                                if (o) diffLines.push('- ' + o);
-                                if (p) diffLines.push('+ ' + p);
-                            } else {
-                                diffLines.push('  ' + p);
+                        if (isNew) {
+                            diffLines.push('--- ' + msg.filePath + ' (NEW FILE) ---');
+                            for (let i = 0; i < Math.min(proposed.length, 120); i++) {
+                                diffLines.push('+ ' + proposed[i]);
                             }
+                            if (proposed.length > 120) diffLines.push('  ... (' + (proposed.length - 120) + ' more lines)');
+                        } else {
+                            const maxLen = Math.max(orig.length, proposed.length);
+                            for (let i = 0; i < Math.min(maxLen, 100); i++) {
+                                const o = orig[i] !== undefined ? orig[i] : '';
+                                const p = proposed[i] !== undefined ? proposed[i] : '';
+                                if (o !== p) {
+                                    if (o) diffLines.push('- ' + o);
+                                    if (p) diffLines.push('+ ' + p);
+                                } else {
+                                    diffLines.push('  ' + p);
+                                }
+                            }
+                            if (maxLen > 100) diffLines.push('  ... (' + (maxLen - 100) + ' more lines not shown)');
                         }
-                        if (maxLen > 100) diffLines.push('  ... (' + (maxLen - 100) + ' more lines not shown)');
                         diffView.textContent = diffLines.join('\\n');
                         editPanel.dataset.editId = msg.editId;
                         editPanel.style.display = 'block';
@@ -1276,8 +1293,13 @@ export function getWebviewHtml(): string {
             };
             state.messages.push(userMsg);
 
-            // If Agent Mode is ON, route to the agentic loop instead of normal chat
-            if (state.agentMode) {
+            // If Agent Mode is ON or if prompt asks for file operations, route to agentic loop
+            const isFileAction = state.agentMode
+                || /\b(create|make|write|generate|add)\s+(a\s+)?(new\s+)?(file|script|program|code|component|module|python|js|ts|html|css)\b/i.test(prompt)
+                || /\b(fix|debug|edit|update|check)\s+(the\s+)?(error|bug|issue|code|file)\b/i.test(prompt)
+                || /\b(how\s+do\s+you|can\s+you\s+create|can\s+you\s+make)\b/i.test(prompt);
+
+            if (isFileAction) {
                 renderMessages();
                 input.value = '';
                 document.getElementById('send-btn').style.display = 'none';

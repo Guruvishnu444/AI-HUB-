@@ -14,10 +14,10 @@ import { WorkspaceGuardrails } from '../../workspace/guardrails';
  *   - node_modules, .git, out/ directories are always excluded from list/search
  */
 
-export type ToolName = 'listFiles' | 'readFile' | 'proposeFileEdit' | 'searchFiles' | 'getActiveFileContext';
+export type ToolName = 'listFiles' | 'readFile' | 'createFile' | 'proposeFileEdit' | 'searchFiles' | 'getActiveFileContext';
 
 export interface ToolCall {
-    name: ToolName;
+    name: ToolName | string;
     args: Record<string, any>;
 }
 
@@ -61,6 +61,16 @@ export class ToolExecutor {
 
             case 'readFile':
                 return this.readFile(tool.args.filePath);
+
+            case 'createFile':
+            case 'create_file':
+            case 'writeFile':
+            case 'write_file':
+                return this.createFile(
+                    tool.args.filePath || tool.args.filename || tool.args.path,
+                    tool.args.content !== undefined ? tool.args.content : (tool.args.newContent || ''),
+                    tool.args.description || `Create new file: ${tool.args.filePath || tool.args.filename || ''}`
+                );
 
             case 'proposeFileEdit':
                 return this.proposeFileEdit(
@@ -150,6 +160,35 @@ export class ToolExecutor {
         } catch (err: any) {
             return { toolName: 'readFile', success: false, output: `Could not read file "${filePath}": ${err?.message || err}` };
         }
+    }
+
+    private async createFile(filePath: string, content: string, description: string): Promise<ToolResult> {
+        if (!filePath) {
+            return { toolName: 'createFile', success: false, output: 'File path is required.' };
+        }
+
+        const validation = this.guardrails.validatePath(filePath);
+        if (!validation.allowed) {
+            return { toolName: 'createFile', success: false, output: validation.reason || 'Write access denied.', blocked: true };
+        }
+
+        const editId = `create_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+        const pending: PendingEdit = {
+            editId,
+            filePath,
+            originalContent: '',
+            proposedContent: content,
+            description: description || `Create new file: ${filePath}`
+        };
+
+        this.pendingEdits.set(editId, pending);
+
+        return {
+            toolName: 'createFile',
+            success: true,
+            output: `New file creation prepared for "${filePath}". Prompting user to approve and save to workspace.`,
+            pendingEdit: pending
+        };
     }
 
     private async proposeFileEdit(filePath: string, newContent: string, description: string): Promise<ToolResult> {
