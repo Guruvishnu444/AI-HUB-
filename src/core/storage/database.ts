@@ -89,67 +89,51 @@ export class HubDatabase {
         this.providers.set(deepseek.id, deepseek);
     }
 
-    // Map of deprecated or invalid model IDs to verified working replacements
+    // Map of deprecated or old model IDs to current verified working replacements
     private static readonly DEPRECATED_MODEL_IDS: Record<string, string> = {
-        'gemini-2.5-flash':                 'gemini-2.0-flash',
-        'gemini-2.5-flash-preview-05-20':   'gemini-2.0-flash',
-        'gemini-2.5-pro':                   'gemini-1.5-pro',
-        'gemini-2.5-pro-preview-06-05':     'gemini-1.5-pro',
-        'gemini-3.8-flash':                 'gemini-2.0-flash'
+        'gemini-2.5-flash':                 'gemini-3.8-flash',
+        'gemini-2.5-flash-preview-05-20':   'gemini-3.8-flash',
+        'gemini-2.5-pro':                   'gemini-3.8-pro',
+        'gemini-2.5-pro-preview-06-05':     'gemini-3.8-pro',
+        'gemini-2.0-flash':                 'gemini-3.8-flash',
+        'gemini-1.5-flash':                 'gemini-3.8-flash'
     };
 
     private seedDefaultModels(): void {
         const defaultModels: ModelMetadata[] = [
             {
-                id: 'gemini-2.0-flash',
-                displayName: 'Gemini 2.0 Flash',
+                id: 'gemini-3.8-flash',
+                displayName: 'Gemini 3.8 Flash',
                 providerId: 'google-gemini',
                 capabilities: {
                     supportsStreaming: true,
                     supportsVision: true,
                     supportsTools: true,
                     supportsJsonMode: true,
-                    supportsReasoningContent: false,
+                    supportsReasoningContent: true,
                     maxContextTokens: 1048576,
-                    maxOutputTokens: 8192
+                    maxOutputTokens: 65536
                 },
                 isCustom: false,
                 isEnabled: true,
-                description: 'Official production-stable Gemini model with 1M token context, vision, and tool calling.'
+                description: 'Latest Google frontier flash model with native deep reasoning, 1M context, multimodal vision, and agentic tool use.'
             },
             {
-                id: 'gemini-1.5-flash',
-                displayName: 'Gemini 1.5 Flash',
+                id: 'gemini-3.8-pro',
+                displayName: 'Gemini 3.8 Pro',
                 providerId: 'google-gemini',
                 capabilities: {
                     supportsStreaming: true,
                     supportsVision: true,
                     supportsTools: true,
                     supportsJsonMode: true,
-                    supportsReasoningContent: false,
-                    maxContextTokens: 1048576,
-                    maxOutputTokens: 8192
-                },
-                isCustom: false,
-                isEnabled: true,
-                description: 'Widely-available workhorse model with high speed and multimodal capabilities.'
-            },
-            {
-                id: 'gemini-1.5-pro',
-                displayName: 'Gemini 1.5 Pro',
-                providerId: 'google-gemini',
-                capabilities: {
-                    supportsStreaming: true,
-                    supportsVision: true,
-                    supportsTools: true,
-                    supportsJsonMode: true,
-                    supportsReasoningContent: false,
+                    supportsReasoningContent: true,
                     maxContextTokens: 2097152,
-                    maxOutputTokens: 8192
+                    maxOutputTokens: 65536
                 },
                 isCustom: false,
                 isEnabled: true,
-                description: 'Frontier reasoning model with 2M token context, advanced coding intelligence, and multimodal support.'
+                description: 'Frontier reasoning model with 2M context, deep multi-step planning, and multimodal code intelligence.'
             },
             {
                 id: 'deepseek-chat',
@@ -206,10 +190,10 @@ export class HubDatabase {
 
             if (parsed.models && Array.isArray(parsed.models)) {
                 for (const m of parsed.models) {
-                    // Migrate deprecated or invalid preview model IDs on load
+                    // Migrate deprecated or invalid model IDs on load
                     const replacement = HubDatabase.DEPRECATED_MODEL_IDS[m.id];
-                    if (replacement || m.id.startsWith('gemini-2.5') || m.id.startsWith('gemini-3.')) {
-                        const targetId = replacement || 'gemini-2.0-flash';
+                    if (replacement || m.id.startsWith('gemini-2.') || m.id.startsWith('gemini-1.')) {
+                        const targetId = replacement || 'gemini-3.8-flash';
                         const freshSeed = Array.from(this.models.values()).find(s => s.id === targetId);
                         if (freshSeed) {
                             this.models.set(freshSeed.id, freshSeed);

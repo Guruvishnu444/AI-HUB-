@@ -177,6 +177,14 @@ export class GeminiAdapter extends BaseProviderAdapter {
 
         if (!response.ok) {
             const errBody = await response.text();
+            // If generateContent 404s or recommends Interactions API, fallback seamlessly
+            if (response.status === 404 || errBody.includes('Interactions API') || errBody.includes('not found')) {
+                try {
+                    return await this.sendInteractionsChat(apiKey, request, abortSignal);
+                } catch {
+                    // Fall back to throwing sanitized original error
+                }
+            }
             throw this.sanitizeError(new Error(`HTTP ${response.status}: ${errBody}`), apiKey);
         }
 
@@ -198,6 +206,66 @@ export class GeminiAdapter extends BaseProviderAdapter {
             content,
             finishReason,
             usage,
+            providerId: this.providerId,
+            modelId: request.modelId
+        };
+    }
+
+    private async sendInteractionsChat(
+        apiKey: string,
+        request: ChatCompletionRequest,
+        abortSignal?: AbortSignal
+    ): Promise<ChatCompletionResponse> {
+        const url = `${this.config.baseUrl}/interactions?key=${encodeURIComponent(apiKey)}`;
+        const modelName = request.modelId.replace(/^models\//, '');
+
+        // Use last user message content or joined message history
+        const lastMsg = request.messages[request.messages.length - 1];
+        const inputText = lastMsg?.content || '';
+
+        const interactionPayload = {
+            model: modelName,
+            input: inputText
+        };
+
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-goog-api-key': apiKey
+            },
+            body: JSON.stringify(interactionPayload),
+            signal: abortSignal
+        });
+
+        if (!response.ok) {
+            const errBody = await response.text();
+            throw new Error(`HTTP ${response.status}: ${errBody}`);
+        }
+
+        const data = (await response.json()) as any;
+        let content = '';
+
+        if (data.steps && Array.isArray(data.steps)) {
+            for (const step of data.steps) {
+                if (step.content && Array.isArray(step.content)) {
+                    for (const c of step.content) {
+                        if (c.text) content += c.text;
+                    }
+                } else if (typeof step.text === 'string') {
+                    content += step.text;
+                }
+            }
+        } else if (data.output_text) {
+            content = data.output_text;
+        } else if (data.candidates?.[0]?.content?.parts?.[0]?.text) {
+            content = data.candidates[0].content.parts[0].text;
+        }
+
+        return {
+            requestId: request.requestId,
+            content,
+            finishReason: 'stop',
             providerId: this.providerId,
             modelId: request.modelId
         };
@@ -230,6 +298,23 @@ export class GeminiAdapter extends BaseProviderAdapter {
 
         if (!response.ok) {
             const errBody = await response.text();
+            // If streaming generateContent 404s or asks for Interactions API, use interactions fallback
+            if (response.status === 404 || errBody.includes('Interactions API') || errBody.includes('not found')) {
+                try {
+                    const completed = await this.sendInteractionsChat(apiKey, request, abortSignal);
+                    yield {
+                        requestId: request.requestId,
+                        deltaContent: completed.content,
+                        isComplete: true,
+                        finishReason: 'stop',
+                        providerId: this.providerId,
+                        modelId: request.modelId
+                    };
+                    return;
+                } catch {
+                    // Fall back to throwing sanitized original error
+                }
+            }
             throw this.sanitizeError(new Error(`HTTP ${response.status}: ${errBody}`), apiKey);
         }
 
