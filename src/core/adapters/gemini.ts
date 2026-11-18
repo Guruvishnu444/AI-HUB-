@@ -177,15 +177,17 @@ export class GeminiAdapter extends BaseProviderAdapter {
 
         if (!response.ok) {
             const errBody = await response.text();
-            // If generateContent 404s or recommends Interactions API, fallback seamlessly
-            if (response.status === 404 || errBody.includes('Interactions API') || errBody.includes('not found')) {
+            // If generateContent 404s, 503s, or recommends Interactions API, fallback seamlessly
+            if (response.status === 404 || response.status === 503 || errBody.includes('Interactions API') || errBody.includes('not found') || errBody.includes('high demand') || errBody.includes('UNAVAILABLE')) {
                 try {
                     return await this.sendInteractionsChat(apiKey, request, abortSignal);
                 } catch {
                     // Fall back to throwing sanitized original error
                 }
             }
-            throw this.sanitizeError(new Error(`HTTP ${response.status}: ${errBody}`), apiKey);
+            const err: any = new Error(`HTTP ${response.status}: ${errBody}`);
+            err.status = response.status;
+            throw this.sanitizeError(err, apiKey);
         }
 
         const data = (await response.json()) as any;
@@ -298,8 +300,8 @@ export class GeminiAdapter extends BaseProviderAdapter {
 
         if (!response.ok) {
             const errBody = await response.text();
-            // If streaming generateContent 404s or asks for Interactions API, use interactions fallback
-            if (response.status === 404 || errBody.includes('Interactions API') || errBody.includes('not found')) {
+            // If streaming generateContent 404s, 503s or asks for Interactions API, use interactions fallback
+            if (response.status === 404 || response.status === 503 || errBody.includes('Interactions API') || errBody.includes('not found') || errBody.includes('high demand') || errBody.includes('UNAVAILABLE')) {
                 try {
                     const completed = await this.sendInteractionsChat(apiKey, request, abortSignal);
                     yield {
@@ -315,7 +317,9 @@ export class GeminiAdapter extends BaseProviderAdapter {
                     // Fall back to throwing sanitized original error
                 }
             }
-            throw this.sanitizeError(new Error(`HTTP ${response.status}: ${errBody}`), apiKey);
+            const err: any = new Error(`HTTP ${response.status}: ${errBody}`);
+            err.status = response.status;
+            throw this.sanitizeError(err, apiKey);
         }
 
         if (!response.body) {

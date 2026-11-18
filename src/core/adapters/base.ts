@@ -29,7 +29,15 @@ export abstract class BaseProviderAdapter implements IProviderAdapter {
      */
     protected sanitizeError(rawError: any, apiKey: string): HubError {
         let message = rawError?.message || String(rawError);
-        const statusCode = rawError?.status || rawError?.statusCode || rawError?.response?.status;
+        let statusCode: number | undefined = rawError?.status || rawError?.statusCode || rawError?.response?.status;
+
+        // Extract status code from message string if not present on error object
+        if (!statusCode) {
+            const httpMatch = message.match(/HTTP\s+(\d{3})/i) || message.match(/"code":\s*(\d{3})/);
+            if (httpMatch) {
+                statusCode = parseInt(httpMatch[1], 10);
+            }
+        }
 
         // Redact API key
         if (apiKey && apiKey.length > 5) {
@@ -41,7 +49,7 @@ export abstract class BaseProviderAdapter implements IProviderAdapter {
         let userFacingMessage = `Provider error: ${message}`;
         let retryAfterSeconds: number | undefined;
 
-        if (statusCode === 401 || statusCode === 403 || message.includes('API key') || message.includes('Unauthorized')) {
+        if (statusCode === 401 || statusCode === 403 || message.includes('API key') || message.includes('Unauthorized') || message.includes('API_KEY_INVALID')) {
             code = HubErrorCode.AUTH_FAILED;
             isRetryable = false;
             userFacingMessage = `Authentication failed for ${this.config.name}. Please verify your API key in the Provider Manager.`;
@@ -56,10 +64,17 @@ export abstract class BaseProviderAdapter implements IProviderAdapter {
                     retryAfterSeconds = parsed;
                 }
             }
-            userFacingMessage = `${this.config.name} is currently rate-limited (HTTP 429).${retryAfterSeconds ? ` Try again in ${retryAfterSeconds}s.` : ''}`;
-        } else if (statusCode >= 500 && statusCode < 600) {
+            if (!retryAfterSeconds) retryAfterSeconds = 3;
+            userFacingMessage = `${this.config.name} is currently rate-limited (HTTP 429). Retrying in ${retryAfterSeconds}s...`;
+        } else if (statusCode === 503 || message.includes('503') || message.includes('high demand') || message.includes('UNAVAILABLE') || message.includes('overloaded')) {
             code = HubErrorCode.SERVER_ERROR;
             isRetryable = true;
+            retryAfterSeconds = 2;
+            userFacingMessage = `${this.config.name} is experiencing temporary high demand (HTTP 503). Retrying automatically...`;
+        } else if (statusCode && statusCode >= 500 && statusCode < 600) {
+            code = HubErrorCode.SERVER_ERROR;
+            isRetryable = true;
+            retryAfterSeconds = 3;
             userFacingMessage = `${this.config.name} server error (HTTP ${statusCode}). The provider service may be temporarily unavailable.`;
         } else if (message.includes('insufficient_quota') || message.includes('credit') || message.includes('billing')) {
             code = HubErrorCode.INSUFFICIENT_CREDITS;
@@ -68,6 +83,7 @@ export abstract class BaseProviderAdapter implements IProviderAdapter {
         } else if (message.includes('timeout') || message.includes('ETIMEDOUT') || message.includes('ECONNRESET')) {
             code = HubErrorCode.NETWORK_TIMEOUT;
             isRetryable = true;
+            retryAfterSeconds = 2;
             userFacingMessage = `Connection to ${this.config.name} timed out.`;
         }
 
