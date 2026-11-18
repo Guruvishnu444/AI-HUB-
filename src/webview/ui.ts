@@ -658,7 +658,20 @@ export function getWebviewHtml(): string {
                         state.messages = merged;
                     }
                     state.activeProviderId = msg.activeProviderId || state.activeProviderId;
-                    state.activeModelId = msg.activeModelId || state.activeModelId;
+                    // Guard against deprecated model IDs coming back from persisted state
+                    {
+                        const deprecatedSet = new Set([
+                            'gemini-2.5-flash','gemini-2.5-flash-preview-05-20','gemini-2.5-flash-preview',
+                            'gemini-2.5-pro','gemini-2.5-pro-preview-06-05','gemini-2.5-pro-preview',
+                            'gemini-2.0-flash','gemini-2.0-flash-preview','gemini-2.0-pro',
+                            'gemini-1.5-flash','gemini-1.5-pro','gemini-1.0-pro','gemini-pro'
+                        ]);
+                        const incoming = msg.activeModelId || state.activeModelId;
+                        state.activeModelId = deprecatedSet.has(incoming) ? 'gemini-3.8-flash' : incoming;
+                        if (deprecatedSet.has(incoming)) {
+                            state.activeProviderId = 'google-gemini';
+                        }
+                    }
                     state.modelUsage = msg.modelUsage || [];
                     state.totalTokens = msg.totalTokens || 0;
                     state.totalRequests = msg.totalRequests || 0;
@@ -794,14 +807,31 @@ export function getWebviewHtml(): string {
             const select = document.getElementById('model-selector');
             select.innerHTML = '';
 
+            // Deprecated Gemini model IDs that must never appear in the dropdown
+            const deprecatedIds = new Set([
+                'gemini-2.5-flash', 'gemini-2.5-flash-preview-05-20', 'gemini-2.5-flash-preview',
+                'gemini-2.5-pro', 'gemini-2.5-pro-preview-06-05', 'gemini-2.5-pro-preview',
+                'gemini-2.0-flash', 'gemini-2.0-flash-preview', 'gemini-2.0-pro',
+                'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-1.0-pro', 'gemini-pro'
+            ]);
+
             let allModels = [];
             state.providers.forEach(p => {
                 if (p.config.isEnabled) {
                     p.models.forEach(m => {
-                        if (m.isEnabled) allModels.push({ ...m, providerName: p.config.name });
+                        // Skip any deprecated model IDs
+                        if (m.isEnabled && !deprecatedIds.has(m.id)) {
+                            allModels.push({ ...m, providerName: p.config.name });
+                        }
                     });
                 }
             });
+
+            // If the currently selected model is deprecated, reset to gemini-3.8-flash
+            if (deprecatedIds.has(state.activeModelId)) {
+                state.activeModelId = 'gemini-3.8-flash';
+                state.activeProviderId = 'google-gemini';
+            }
 
             allModels.forEach(m => {
                 const opt = document.createElement('option');

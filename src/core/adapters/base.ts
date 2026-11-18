@@ -76,15 +76,20 @@ export abstract class BaseProviderAdapter implements IProviderAdapter {
             isRetryable = true;
             retryAfterSeconds = 3;
             userFacingMessage = `${this.config.name} server error (HTTP ${statusCode}). The provider service may be temporarily unavailable.`;
-        } else if (message.includes('insufficient_quota') || message.includes('credit') || message.includes('billing')) {
+        } else if (message.includes('insufficient_quota') || message.includes('insufficient_balance') || message.includes('Insufficient Balance') || message.includes('credit') || message.includes('billing')) {
             code = HubErrorCode.INSUFFICIENT_CREDITS;
             isRetryable = false;
-            userFacingMessage = `${this.config.name} reported insufficient credit balance. Please check your billing dashboard.`;
-        } else if (message.includes('timeout') || message.includes('ETIMEDOUT') || message.includes('ECONNRESET')) {
+            userFacingMessage = `${this.config.name} reported insufficient account balance. Please check your provider billing dashboard.`;
+        } else if (message.includes('fetch failed') || message.includes('ENOTFOUND') || message.includes('ECONNREFUSED') || message.includes('ECONNRESET')) {
             code = HubErrorCode.NETWORK_TIMEOUT;
             isRetryable = true;
             retryAfterSeconds = 2;
-            userFacingMessage = `Connection to ${this.config.name} timed out.`;
+            userFacingMessage = `Cannot reach ${this.config.name} at ${this.config.baseUrl}. Please check your internet connection or endpoint URL.`;
+        } else if (message.includes('timeout') || message.includes('ETIMEDOUT')) {
+            code = HubErrorCode.NETWORK_TIMEOUT;
+            isRetryable = true;
+            retryAfterSeconds = 2;
+            userFacingMessage = `Connection to ${this.config.name} timed out. The provider may be slow or unreachable.`;
         }
 
         const details: HubErrorDetails = {

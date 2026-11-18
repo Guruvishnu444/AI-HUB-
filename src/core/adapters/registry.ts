@@ -2,6 +2,7 @@ import { IProviderAdapter, ProviderConfig } from '../types/provider';
 import { GeminiAdapter } from './gemini';
 import { DeepSeekAdapter } from './deepseek';
 import { OpenAICompatibleAdapter } from './openaiCompatible';
+import { AnthropicAdapter } from './anthropic';
 
 export class AdapterRegistry {
     private adapters: Map<string, IProviderAdapter> = new Map();
@@ -27,6 +28,8 @@ export class AdapterRegistry {
                 this.registerAdapter(new GeminiAdapter(config));
             } else if (config.id === 'deepseek') {
                 this.registerAdapter(new DeepSeekAdapter(config));
+            } else if (config.id === 'anthropic' || config.baseUrl?.includes('anthropic.com')) {
+                this.registerAdapter(new AnthropicAdapter(config));
             } else if (config.protocol === 'openai-compatible') {
                 this.registerAdapter(new OpenAICompatibleAdapter(config));
             }

@@ -15,25 +15,56 @@ export class DeepSeekAdapter extends BaseProviderAdapter {
         const apiKey = cleanApiKey(rawKey);
         const start = Date.now();
         try {
-            let url = `${this.config.baseUrl}/models`;
-            let response = await fetch(url, {
-                method: 'GET',
-                headers: {
-                    'Authorization': `Bearer ${apiKey}`,
-                    'Content-Type': 'application/json'
-                }
-            });
+            const base = this.config.baseUrl.replace(/\/+$/, '');
+            let url = base.endsWith('/v1') ? `${base}/models` : `${base}/v1/models`;
 
-            // If base/models 404s, try /v1/models
-            if (response.status === 404 && !this.config.baseUrl.endsWith('/v1')) {
-                url = `${this.config.baseUrl}/v1/models`;
+            let response: Response;
+            try {
                 response = await fetch(url, {
                     method: 'GET',
                     headers: {
                         'Authorization': `Bearer ${apiKey}`,
-                        'Content-Type': 'application/json'
+                        'Content-Type': 'application/json',
+                        'User-Agent': 'Antigravity-Multi-AI-Hub/0.1.0'
                     }
                 });
+            } catch (fetchErr) {
+                // If /v1/models fails or network error, try base/models
+                url = `${base}/models`;
+                response = await fetch(url, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${apiKey}`,
+                        'Content-Type': 'application/json',
+                        'User-Agent': 'Antigravity-Multi-AI-Hub/0.1.0'
+                    }
+                });
+            }
+
+            // If /models returns 404, try a minimal ping to /chat/completions to verify auth
+            if (response.status === 404) {
+                const chatUrl = base.endsWith('/v1') ? `${base}/chat/completions` : `${base}/v1/chat/completions`;
+                const chatRes = await fetch(chatUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${apiKey}`,
+                        'Content-Type': 'application/json',
+                        'User-Agent': 'Antigravity-Multi-AI-Hub/0.1.0'
+                    },
+                    body: JSON.stringify({
+                        model: 'deepseek-chat',
+                        messages: [{ role: 'user', content: 'ping' }],
+                        max_tokens: 1
+                    })
+                });
+                if (chatRes.ok || (chatRes.status === 400 && !(await chatRes.clone().text()).includes('Authentication'))) {
+                    return {
+                        success: true,
+                        latencyMs: Date.now() - start,
+                        modelCount: 2
+                    };
+                }
+                response = chatRes;
             }
 
             if (!response.ok) {
@@ -47,7 +78,9 @@ export class DeepSeekAdapter extends BaseProviderAdapter {
                 } catch {
                     // keep raw
                 }
-                throw new Error(errMsg);
+                const err: any = new Error(errMsg);
+                err.status = response.status;
+                throw err;
             }
 
             const data = (await response.json()) as any;
@@ -56,7 +89,7 @@ export class DeepSeekAdapter extends BaseProviderAdapter {
             return {
                 success: true,
                 latencyMs: Date.now() - start,
-                modelCount: models.length
+                modelCount: Array.isArray(models) ? models.length : 2
             };
         } catch (err: any) {
             const sanitized = this.sanitizeError(err, apiKey);
@@ -92,7 +125,14 @@ export class DeepSeekAdapter extends BaseProviderAdapter {
 
         if (!response.ok) {
             const errBody = await response.text();
-            throw this.sanitizeError(new Error(`HTTP ${response.status}: ${errBody}`), apiKey);
+            let errMsg = `HTTP ${response.status}: ${errBody}`;
+            try {
+                const parsed = JSON.parse(errBody);
+                if (parsed.error && parsed.error.message) errMsg = parsed.error.message;
+            } catch {}
+            const err: any = new Error(errMsg);
+            err.status = response.status;
+            throw this.sanitizeError(err, apiKey);
         }
 
         const data = (await response.json()) as any;
@@ -189,7 +229,14 @@ export class DeepSeekAdapter extends BaseProviderAdapter {
 
         if (!response.ok) {
             const errBody = await response.text();
-            throw this.sanitizeError(new Error(`HTTP ${response.status}: ${errBody}`), apiKey);
+            let errMsg = `HTTP ${response.status}: ${errBody}`;
+            try {
+                const parsed = JSON.parse(errBody);
+                if (parsed.error && parsed.error.message) errMsg = parsed.error.message;
+            } catch {}
+            const err: any = new Error(errMsg);
+            err.status = response.status;
+            throw this.sanitizeError(err, apiKey);
         }
 
         const data = (await response.json()) as any;
@@ -256,7 +303,14 @@ export class DeepSeekAdapter extends BaseProviderAdapter {
 
         if (!response.ok) {
             const errBody = await response.text();
-            throw this.sanitizeError(new Error(`HTTP ${response.status}: ${errBody}`), apiKey);
+            let errMsg = `HTTP ${response.status}: ${errBody}`;
+            try {
+                const parsed = JSON.parse(errBody);
+                if (parsed.error && parsed.error.message) errMsg = parsed.error.message;
+            } catch {}
+            const err: any = new Error(errMsg);
+            err.status = response.status;
+            throw this.sanitizeError(err, apiKey);
         }
 
         if (!response.body) {

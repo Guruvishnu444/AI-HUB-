@@ -24,10 +24,16 @@ export class OpenAICompatibleAdapter extends BaseProviderAdapter {
         try {
             let url = this.getEndpointUrl('/models');
             const headers: Record<string, string> = {
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'User-Agent': 'Antigravity-Multi-AI-Hub/0.1.0'
             };
             if (apiKey) {
                 headers['Authorization'] = `Bearer ${apiKey}`;
+            }
+
+            if (this.config.baseUrl.includes('openrouter.ai')) {
+                headers['HTTP-Referer'] = 'https://antigravity.hub';
+                headers['X-Title'] = 'Antigravity Multi-AI Hub';
             }
 
             let response = await fetch(url, { method: 'GET', headers });
@@ -36,6 +42,31 @@ export class OpenAICompatibleAdapter extends BaseProviderAdapter {
             if (response.status === 404 && !this.config.baseUrl.includes('/v1')) {
                 url = this.getEndpointUrl('/v1/models');
                 response = await fetch(url, { method: 'GET', headers });
+            }
+
+            // If still 404, ping chat/completions to check if endpoint is alive
+            if (response.status === 404) {
+                let chatUrl = this.getEndpointUrl('/chat/completions');
+                if (!this.config.baseUrl.includes('/v1')) {
+                    chatUrl = this.getEndpointUrl('/v1/chat/completions');
+                }
+                const pingRes = await fetch(chatUrl, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({
+                        model: 'test',
+                        messages: [{ role: 'user', content: 'ping' }],
+                        max_tokens: 1
+                    })
+                });
+                if (pingRes.ok || (pingRes.status === 400 && !(await pingRes.clone().text()).includes('API key') && !(await pingRes.clone().text()).includes('Unauthorized'))) {
+                    return {
+                        success: true,
+                        latencyMs: Date.now() - start,
+                        modelCount: 1
+                    };
+                }
+                response = pingRes;
             }
 
             if (!response.ok) {
@@ -49,7 +80,9 @@ export class OpenAICompatibleAdapter extends BaseProviderAdapter {
                 } catch {
                     // keep raw
                 }
-                throw new Error(errMsg);
+                const err: any = new Error(errMsg);
+                err.status = response.status;
+                throw err;
             }
 
             const data = (await response.json()) as any;
@@ -89,7 +122,14 @@ export class OpenAICompatibleAdapter extends BaseProviderAdapter {
 
         if (!response.ok) {
             const errBody = await response.text();
-            throw this.sanitizeError(new Error(`HTTP ${response.status}: ${errBody}`), apiKey);
+            let errMsg = `HTTP ${response.status}: ${errBody}`;
+            try {
+                const parsed = JSON.parse(errBody);
+                if (parsed.error && parsed.error.message) errMsg = parsed.error.message;
+            } catch {}
+            const err: any = new Error(errMsg);
+            err.status = response.status;
+            throw this.sanitizeError(err, apiKey);
         }
 
         const data = (await response.json()) as any;
@@ -172,7 +212,14 @@ export class OpenAICompatibleAdapter extends BaseProviderAdapter {
 
         if (!response.ok) {
             const errBody = await response.text();
-            throw this.sanitizeError(new Error(`HTTP ${response.status}: ${errBody}`), apiKey);
+            let errMsg = `HTTP ${response.status}: ${errBody}`;
+            try {
+                const parsed = JSON.parse(errBody);
+                if (parsed.error && parsed.error.message) errMsg = parsed.error.message;
+            } catch {}
+            const err: any = new Error(errMsg);
+            err.status = response.status;
+            throw this.sanitizeError(err, apiKey);
         }
 
         const data = (await response.json()) as any;
@@ -255,7 +302,14 @@ export class OpenAICompatibleAdapter extends BaseProviderAdapter {
 
         if (!response.ok) {
             const errBody = await response.text();
-            throw this.sanitizeError(new Error(`HTTP ${response.status}: ${errBody}`), apiKey);
+            let errMsg = `HTTP ${response.status}: ${errBody}`;
+            try {
+                const parsed = JSON.parse(errBody);
+                if (parsed.error && parsed.error.message) errMsg = parsed.error.message;
+            } catch {}
+            const err: any = new Error(errMsg);
+            err.status = response.status;
+            throw this.sanitizeError(err, apiKey);
         }
 
         if (!response.body) {

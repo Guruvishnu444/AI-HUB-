@@ -4,6 +4,7 @@ import { HubDatabase } from '../storage/database';
 import { AdapterRegistry } from '../adapters/registry';
 import { FallbackEngine } from '../fallback/engine';
 import { OpenAICompatibleAdapter } from '../adapters/openaiCompatible';
+import { AnthropicAdapter } from '../adapters/anthropic';
 import { WebviewToHostMessage, HostToWebviewMessage, ProviderSummary } from '../types/ipc';
 import { ChatMessage, ChatCompletionRequest } from '../types/chat';
 import { HubError } from '../types/errors';
@@ -81,8 +82,11 @@ export class GatewayRouter {
             }
 
             case 'TEST_CONNECTION': {
+                const pConfig = this.db.getProvider(msg.providerId);
+                const isLocal = pConfig?.baseUrl?.includes('localhost') || pConfig?.baseUrl?.includes('127.0.0.1');
                 const apiKey = await this.vault.getKey(msg.providerId);
-                if (!apiKey) {
+
+                if (!apiKey && !isLocal) {
                     postMessage({
                         type: 'CONNECTION_TEST_RESULT',
                         providerId: msg.providerId,
@@ -95,7 +99,16 @@ export class GatewayRouter {
                     return;
                 }
 
-                const adapter = this.registry.getAdapter(msg.providerId);
+                let adapter = this.registry.getAdapter(msg.providerId);
+                if (!adapter && pConfig) {
+                    if (pConfig.id === 'anthropic' || pConfig.baseUrl?.includes('anthropic.com')) {
+                        adapter = new AnthropicAdapter(pConfig);
+                    } else {
+                        adapter = new OpenAICompatibleAdapter(pConfig);
+                    }
+                    this.registry.registerAdapter(adapter);
+                }
+
                 if (!adapter) {
                     postMessage({
                         type: 'CONNECTION_TEST_RESULT',
@@ -109,7 +122,7 @@ export class GatewayRouter {
                     return;
                 }
 
-                const result = await adapter.testConnection(apiKey);
+                const result = await adapter.testConnection(apiKey || '');
                 postMessage({ type: 'CONNECTION_TEST_RESULT', providerId: msg.providerId, result });
                 break;
             }
@@ -159,7 +172,12 @@ export class GatewayRouter {
                     }
 
                     // Register adapter dynamically
-                    const adapter = new OpenAICompatibleAdapter(msg.provider);
+                    let adapter;
+                    if (msg.provider.id === 'anthropic' || msg.provider.baseUrl?.includes('anthropic.com')) {
+                        adapter = new AnthropicAdapter(msg.provider);
+                    } else {
+                        adapter = new OpenAICompatibleAdapter(msg.provider);
+                    }
                     this.registry.registerAdapter(adapter);
 
                     this.db.logAudit(

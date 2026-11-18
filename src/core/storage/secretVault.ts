@@ -3,18 +3,18 @@ import * as vscode from 'vscode';
 export function cleanApiKey(raw: string): string {
     if (!raw) return '';
     let key = raw.trim();
-    // If user pasted key assignment from .env (e.g. KEY=sk-...)
-    if (key.includes('=')) {
-        key = key.split('=').pop()!.trim();
+    // Only strip variable assignment prefix if it matches an env var pattern like API_KEY= or KEY =
+    if (/^[A-Za-z0-9_-]{2,}\s*=\s*/.test(key)) {
+        key = key.replace(/^[A-Za-z0-9_-]{2,}\s*=\s*/, '');
     }
     // If user pasted with "Bearer " prefix
     if (key.toLowerCase().startsWith('bearer ')) {
         key = key.substring(7).trim();
     }
     // Strip surrounding quotes
-    key = key.replace(/^["'`]|["'`]$/g, '').trim();
+    key = key.replace(/^["'`]+|["'`]+$/g, '').trim();
     // Strip trailing semicolons or commas
-    key = key.replace(/[;,]$/, '').trim();
+    key = key.replace(/[;,]+$/, '').trim();
     return key;
 }
 

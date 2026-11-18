@@ -65,38 +65,83 @@ export class HubDatabase {
     }
 
     private seedDefaultProviders(): void {
-        const gemini: ProviderConfig = {
-            id: 'google-gemini',
-            name: 'Google Gemini',
-            protocol: 'google-native',
-            baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
-            isEnabled: true,
-            timeoutMs: 45000,
-            maxRetries: 2
-        };
+        const providers: ProviderConfig[] = [
+            {
+                id: 'google-gemini',
+                name: 'Google Gemini',
+                protocol: 'google-native',
+                baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+                isEnabled: true,
+                timeoutMs: 45000,
+                maxRetries: 2
+            },
+            {
+                id: 'deepseek',
+                name: 'DeepSeek Official',
+                protocol: 'openai-compatible',
+                baseUrl: 'https://api.deepseek.com',
+                isEnabled: true,
+                timeoutMs: 45000,
+                maxRetries: 2
+            },
+            {
+                id: 'openai',
+                name: 'OpenAI',
+                protocol: 'openai-compatible',
+                baseUrl: 'https://api.openai.com/v1',
+                isEnabled: true,
+                timeoutMs: 45000,
+                maxRetries: 2
+            },
+            {
+                id: 'anthropic',
+                name: 'Anthropic Claude',
+                protocol: 'anthropic-native',
+                baseUrl: 'https://api.anthropic.com/v1',
+                isEnabled: true,
+                timeoutMs: 45000,
+                maxRetries: 2
+            },
+            {
+                id: 'openrouter',
+                name: 'OpenRouter',
+                protocol: 'openai-compatible',
+                baseUrl: 'https://openrouter.ai/api/v1',
+                isEnabled: true,
+                timeoutMs: 45000,
+                maxRetries: 2
+            },
+            {
+                id: 'groq',
+                name: 'Groq',
+                protocol: 'openai-compatible',
+                baseUrl: 'https://api.groq.com/openai/v1',
+                isEnabled: true,
+                timeoutMs: 45000,
+                maxRetries: 2
+            }
+        ];
 
-        const deepseek: ProviderConfig = {
-            id: 'deepseek',
-            name: 'DeepSeek Official',
-            protocol: 'openai-compatible',
-            baseUrl: 'https://api.deepseek.com',
-            isEnabled: true,
-            timeoutMs: 45000,
-            maxRetries: 2
-        };
-
-        this.providers.set(gemini.id, gemini);
-        this.providers.set(deepseek.id, deepseek);
+        for (const p of providers) {
+            this.providers.set(p.id, p);
+        }
     }
 
     // Map of deprecated or old model IDs to current verified working replacements
     private static readonly DEPRECATED_MODEL_IDS: Record<string, string> = {
-        'gemini-2.5-flash':                 'gemini-3.8-flash',
-        'gemini-2.5-flash-preview-05-20':   'gemini-3.8-flash',
-        'gemini-2.5-pro':                   'gemini-3.8-pro',
-        'gemini-2.5-pro-preview-06-05':     'gemini-3.8-pro',
-        'gemini-2.0-flash':                 'gemini-3.8-flash',
-        'gemini-1.5-flash':                 'gemini-3.8-flash'
+        'gemini-2.5-flash':                         'gemini-3.8-flash',
+        'gemini-2.5-flash-preview-05-20':           'gemini-3.8-flash',
+        'gemini-2.5-flash-preview':                 'gemini-3.8-flash',
+        'gemini-2.5-pro':                           'gemini-3.8-pro',
+        'gemini-2.5-pro-preview-06-05':             'gemini-3.8-pro',
+        'gemini-2.5-pro-preview':                   'gemini-3.8-pro',
+        'gemini-2.0-flash':                         'gemini-3.8-flash',
+        'gemini-2.0-flash-preview':                 'gemini-3.8-flash',
+        'gemini-2.0-pro':                           'gemini-3.8-pro',
+        'gemini-1.5-flash':                         'gemini-3.8-flash',
+        'gemini-1.5-pro':                           'gemini-3.8-pro',
+        'gemini-1.0-pro':                           'gemini-3.8-flash',
+        'gemini-pro':                               'gemini-3.8-flash'
     };
 
     private seedDefaultModels(): void {
@@ -168,6 +213,74 @@ export class HubDatabase {
                 isCustom: false,
                 isEnabled: true,
                 description: 'Advanced reasoning model with native Chain-of-Thought. (No tool calls or JSON mode).'
+            },
+            {
+                id: 'gpt-4o',
+                displayName: 'GPT-4o',
+                providerId: 'openai',
+                capabilities: {
+                    supportsStreaming: true,
+                    supportsVision: true,
+                    supportsTools: true,
+                    supportsJsonMode: true,
+                    supportsReasoningContent: false,
+                    maxContextTokens: 128000,
+                    maxOutputTokens: 4096
+                },
+                isCustom: false,
+                isEnabled: true,
+                description: 'OpenAI flagship multimodal intelligent model.'
+            },
+            {
+                id: 'gpt-4o-mini',
+                displayName: 'GPT-4o Mini',
+                providerId: 'openai',
+                capabilities: {
+                    supportsStreaming: true,
+                    supportsVision: true,
+                    supportsTools: true,
+                    supportsJsonMode: true,
+                    supportsReasoningContent: false,
+                    maxContextTokens: 128000,
+                    maxOutputTokens: 4096
+                },
+                isCustom: false,
+                isEnabled: true,
+                description: 'Fast, cost-efficient OpenAI model for daily coding tasks.'
+            },
+            {
+                id: 'claude-3-5-sonnet-20241022',
+                displayName: 'Claude 3.5 Sonnet',
+                providerId: 'anthropic',
+                capabilities: {
+                    supportsStreaming: true,
+                    supportsVision: true,
+                    supportsTools: true,
+                    supportsJsonMode: true,
+                    supportsReasoningContent: false,
+                    maxContextTokens: 200000,
+                    maxOutputTokens: 8192
+                },
+                isCustom: false,
+                isEnabled: true,
+                description: 'Frontier code intelligence and deep analysis model from Anthropic.'
+            },
+            {
+                id: 'claude-3-7-sonnet-20250219',
+                displayName: 'Claude 3.7 Sonnet',
+                providerId: 'anthropic',
+                capabilities: {
+                    supportsStreaming: true,
+                    supportsVision: true,
+                    supportsTools: true,
+                    supportsJsonMode: true,
+                    supportsReasoningContent: true,
+                    maxContextTokens: 200000,
+                    maxOutputTokens: 8192
+                },
+                isCustom: false,
+                isEnabled: true,
+                description: 'Hybrid reasoning and coding model from Anthropic.'
             }
         ];
 
@@ -184,23 +297,44 @@ export class HubDatabase {
 
             if (parsed.providers && Array.isArray(parsed.providers)) {
                 for (const p of parsed.providers) {
-                    this.providers.set(p.id, p);
+                    // Always prefer fresh seeded data for built-in providers
+                    if (!this.providers.has(p.id)) {
+                        this.providers.set(p.id, p);
+                    }
                 }
             }
 
             if (parsed.models && Array.isArray(parsed.models)) {
+                let didMigrate = false;
                 for (const m of parsed.models) {
-                    // Migrate deprecated or invalid model IDs on load
+                    // Aggressively migrate any deprecated/old Gemini model IDs on load
                     const replacement = HubDatabase.DEPRECATED_MODEL_IDS[m.id];
-                    if (replacement || m.id.startsWith('gemini-2.') || m.id.startsWith('gemini-1.')) {
+                    const isOldGemini =
+                        m.id.startsWith('gemini-2.') ||
+                        m.id.startsWith('gemini-1.') ||
+                        m.id.includes('preview') ||
+                        m.id.includes('flash-preview') ||
+                        m.id.includes('pro-preview');
+
+                    if (replacement || isOldGemini) {
+                        // Delete the stale model so it never shows in the dropdown
+                        this.models.delete(m.id);
                         const targetId = replacement || 'gemini-3.8-flash';
                         const freshSeed = Array.from(this.models.values()).find(s => s.id === targetId);
                         if (freshSeed) {
                             this.models.set(freshSeed.id, freshSeed);
                         }
+                        didMigrate = true;
                         continue;
                     }
-                    this.models.set(m.id, m);
+                    // Don't overwrite built-in seeded models with potentially stale saved copies
+                    if (!this.models.has(m.id)) {
+                        this.models.set(m.id, m);
+                    }
+                }
+                if (didMigrate) {
+                    // Persist the cleaned-up state immediately so stale IDs are gone from disk
+                    await this.persistState();
                 }
             }
 
