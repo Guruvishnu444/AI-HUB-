@@ -375,10 +375,36 @@ export function getWebviewHtml(): string {
                 <textarea id="chat-input" class="chat-textarea" placeholder="Type prompt here... (Enter to send, Shift+Enter for new line)" onkeydown="handleKeyDown(event)"></textarea>
                 <div class="chat-action-bar">
                     <span id="char-counter" style="font-size:11px; opacity:0.6;">Ready</span>
-                    <div style="display:flex; gap:8px;">
+                    <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+                        <label style="display:flex; align-items:center; gap:5px; font-size:11px; cursor:pointer; user-select:none;">
+                            <input type="checkbox" id="agent-mode-toggle" onchange="toggleAgentMode()" style="cursor:pointer;">
+                            Agent Mode
+                        </label>
+                        <label id="debug-mode-label" style="display:none; align-items:center; gap:5px; font-size:11px; cursor:pointer; user-select:none;">
+                            <input type="checkbox" id="debug-mode-toggle" onchange="toggleDebugMode()" style="cursor:pointer;">
+                            Fix / Debug
+                        </label>
+                        <button class="secondary" id="attach-error-btn" style="display:none; font-size:11px; padding:4px 8px;" onclick="attachActiveError()">Attach Active Error</button>
                         <button id="abort-btn" class="danger" style="display:none;" onclick="abortPrompt()">Stop</button>
-                        <button id="send-btn" onclick="sendPrompt()">Send Prompt</button>
+                        <button id="send-btn" onclick="sendPrompt()">Send</button>
                     </div>
+                </div>
+            </div>
+
+            <!-- Agent Thinking Panel (shows tool call steps) -->
+            <div id="agent-thinking-panel" style="display:none; margin-top:8px; border:1px solid rgba(0, 120, 212, 0.3); border-radius:6px; background:rgba(0,0,0,0.2); max-height:160px; overflow-y:auto; padding:8px;">
+                <div style="font-size:11px; font-weight:600; opacity:0.8; margin-bottom:6px;">Agent working...</div>
+                <div id="agent-thinking-steps" style="font-size:11px; font-family:monospace; opacity:0.85;"></div>
+            </div>
+
+            <!-- Agent Edit Approval Panel -->
+            <div id="agent-edit-panel" style="display:none; margin-top:8px; border:1px solid rgba(0, 180, 100, 0.4); border-radius:6px; background:rgba(0,0,0,0.25); padding:10px;">
+                <div style="font-weight:600; font-size:12px; margin-bottom:6px;">Agent proposes an edit — review and approve:</div>
+                <div id="agent-edit-info" style="font-size:11.5px; margin-bottom:8px;"></div>
+                <div id="agent-diff-view" style="font-family:monospace; font-size:11px; white-space:pre-wrap; max-height:200px; overflow-y:auto; background:rgba(0,0,0,0.3); padding:8px; border-radius:4px; margin-bottom:8px;"></div>
+                <div style="display:flex; gap:8px;">
+                    <button onclick="approveAgentEdit()" style="background:#0e7a0e; border-color:#0e7a0e;">Approve and Save</button>
+                    <button class="danger" onclick="rejectAgentEdit()">Reject</button>
                 </div>
             </div>
         </div>
@@ -625,7 +651,11 @@ export function getWebviewHtml(): string {
             workspaceRoot: null,
             fileTree: [],
             currentPreview: null,
-            currentDiff: null
+            currentDiff: null,
+            agentMode: false,          // true = use agentic tool loop, false = normal chat
+            agentDebugMode: false,     // true = inject debugger system prompt
+            agentThinkingSteps: [],    // accumulated tool call steps for current agent run
+            pendingAgentEdits: {}      // editId -> { filePath, originalContent, proposedContent, description }
         };
 
         function switchTab(tabName) {
@@ -800,6 +830,117 @@ export function getWebviewHtml(): string {
                 case 'SHOW_NOTIFICATION':
                     showToast(msg.message);
                     break;
+
+                // ── Phase 9: Agentic loop messages (all providers) ──────────
+
+                case 'AGENT_THINKING': {
+                    const panel = document.getElementById('agent-thinking-panel');
+                    const steps = document.getElementById('agent-thinking-steps');
+                    if (panel && steps) {
+                        panel.style.display = 'block';
+                        const line = document.createElement('div');
+                        line.style.cssText = 'padding:2px 0; border-bottom:1px solid rgba(255,255,255,0.05);';
+                        line.textContent = '> ' + msg.step;
+                        steps.appendChild(line);
+                        steps.scrollTop = steps.scrollHeight;
+                    }
+                    break;
+                }
+
+                case 'AGENT_TOOL_RESULT': {
+                    const steps2 = document.getElementById('agent-thinking-steps');
+                    if (steps2) {
+                        const line = document.createElement('div');
+                        line.style.cssText = 'padding:2px 0; opacity:0.7; color:' + (msg.success ? '#89d185' : '#f48771') + ';';
+                        line.textContent = (msg.success ? '  OK ' : '  ERR') + ' ' + msg.toolName + ': ' + msg.output.substring(0, 120);
+                        steps2.appendChild(line);
+                        steps2.scrollTop = steps2.scrollHeight;
+                    }
+                    break;
+                }
+
+                case 'AGENT_EDIT_PROPOSAL': {
+                    state.pendingAgentEdits[msg.editId] = msg;
+                    const editPanel = document.getElementById('agent-edit-panel');
+                    const editInfo = document.getElementById('agent-edit-info');
+                    const diffView = document.getElementById('agent-diff-view');
+                    if (editPanel && editInfo && diffView) {
+                        editInfo.innerHTML = '<strong>File:</strong> ' + escapeHtml(msg.filePath) + '<br><span style="opacity:0.8;">' + escapeHtml(msg.description) + '</span>';
+                        // Inline diff: compare line by line
+                        const orig = (msg.originalContent || '').split('\\n');
+                        const proposed = (msg.proposedContent || '').split('\\n');
+                        const diffLines = [];
+                        const maxLen = Math.max(orig.length, proposed.length);
+                        for (let i = 0; i < Math.min(maxLen, 100); i++) {
+                            const o = orig[i] !== undefined ? orig[i] : '';
+                            const p = proposed[i] !== undefined ? proposed[i] : '';
+                            if (o !== p) {
+                                if (o) diffLines.push('- ' + o);
+                                if (p) diffLines.push('+ ' + p);
+                            } else {
+                                diffLines.push('  ' + p);
+                            }
+                        }
+                        if (maxLen > 100) diffLines.push('  ... (' + (maxLen - 100) + ' more lines not shown)');
+                        diffView.textContent = diffLines.join('\\n');
+                        editPanel.dataset.editId = msg.editId;
+                        editPanel.style.display = 'block';
+                    }
+                    break;
+                }
+
+                case 'AGENT_EDIT_APPROVED': {
+                    delete state.pendingAgentEdits[msg.editId];
+                    const ep1 = document.getElementById('agent-edit-panel');
+                    if (ep1) ep1.style.display = 'none';
+                    showToast('Saved: ' + msg.filePath + ' (' + msg.bytesWritten + ' bytes written)');
+                    break;
+                }
+
+                case 'AGENT_EDIT_REJECTED': {
+                    delete state.pendingAgentEdits[msg.editId];
+                    const ep2 = document.getElementById('agent-edit-panel');
+                    if (ep2) ep2.style.display = 'none';
+                    showToast('Edit proposal rejected.');
+                    break;
+                }
+
+                case 'AGENT_RESPONSE': {
+                    document.getElementById('send-btn').style.display = 'block';
+                    document.getElementById('abort-btn').style.display = 'none';
+                    const thPanel = document.getElementById('agent-thinking-panel');
+                    const thSteps = document.getElementById('agent-thinking-steps');
+                    if (thPanel) thPanel.style.display = 'none';
+                    if (thSteps) thSteps.innerHTML = '';
+                    if (!state.messages.some(m => m.id === msg.message.id)) {
+                        state.messages.push(msg.message);
+                    }
+                    renderMessages();
+                    vscode.postMessage({ type: 'INIT_STATE' });
+                    break;
+                }
+
+                case 'AGENT_ERROR': {
+                    document.getElementById('send-btn').style.display = 'block';
+                    document.getElementById('abort-btn').style.display = 'none';
+                    const thPanelE = document.getElementById('agent-thinking-panel');
+                    const thStepsE = document.getElementById('agent-thinking-steps');
+                    if (thPanelE) thPanelE.style.display = 'none';
+                    if (thStepsE) thStepsE.innerHTML = '';
+                    showToast('Agent error: ' + msg.errorMessage);
+                    break;
+                }
+
+                case 'ACTIVE_ERROR_CONTEXT': {
+                    const chatInput = document.getElementById('chat-input');
+                    if (chatInput) {
+                        const existing = chatInput.value.trim();
+                        chatInput.value = (existing ? existing + '\\n\\n' : '') + msg.context;
+                        chatInput.focus();
+                        showToast('Active file context attached. Review the prompt and send.');
+                    }
+                    break;
+                }
             }
         });
 
@@ -1135,7 +1276,30 @@ export function getWebviewHtml(): string {
             };
             state.messages.push(userMsg);
 
-            // Immediately add a pending response bubble
+            // If Agent Mode is ON, route to the agentic loop instead of normal chat
+            if (state.agentMode) {
+                renderMessages();
+                input.value = '';
+                document.getElementById('send-btn').style.display = 'none';
+                document.getElementById('abort-btn').style.display = 'block';
+                // Reset thinking panel
+                const thPanel = document.getElementById('agent-thinking-panel');
+                const thSteps = document.getElementById('agent-thinking-steps');
+                if (thPanel) { thPanel.style.display = 'block'; }
+                if (thSteps) { thSteps.innerHTML = ''; }
+
+                vscode.postMessage({
+                    type: 'AGENT_RUN',
+                    prompt,
+                    providerId: state.activeProviderId,
+                    modelId: state.activeModelId,
+                    isDebugMode: state.agentDebugMode,
+                    clientMessageId: clientMsgId
+                });
+                return;
+            }
+
+            // Normal (non-agent) chat path
             const pendingAssistantMsg = {
                 id: 'pending_' + Date.now(),
                 role: 'assistant',
@@ -1158,6 +1322,45 @@ export function getWebviewHtml(): string {
             });
 
             input.value = '';
+        }
+
+        function toggleAgentMode() {
+            state.agentMode = document.getElementById('agent-mode-toggle').checked;
+            const debugLabel = document.getElementById('debug-mode-label');
+            const attachBtn = document.getElementById('attach-error-btn');
+            if (state.agentMode) {
+                debugLabel.style.display = 'flex';
+                attachBtn.style.display = 'inline-block';
+                document.getElementById('send-btn').textContent = 'Run Agent';
+            } else {
+                debugLabel.style.display = 'none';
+                attachBtn.style.display = 'none';
+                document.getElementById('send-btn').textContent = 'Send';
+                state.agentDebugMode = false;
+                document.getElementById('debug-mode-toggle').checked = false;
+            }
+        }
+
+        function toggleDebugMode() {
+            state.agentDebugMode = document.getElementById('debug-mode-toggle').checked;
+        }
+
+        function attachActiveError() {
+            vscode.postMessage({ type: 'ATTACH_ACTIVE_ERROR' });
+        }
+
+        function approveAgentEdit() {
+            const panel = document.getElementById('agent-edit-panel');
+            const editId = panel ? panel.dataset.editId : null;
+            if (!editId) { showToast('No pending edit to approve.'); return; }
+            vscode.postMessage({ type: 'AGENT_APPROVE_EDIT', editId });
+        }
+
+        function rejectAgentEdit() {
+            const panel = document.getElementById('agent-edit-panel');
+            const editId = panel ? panel.dataset.editId : null;
+            if (!editId) { showToast('No pending edit to reject.'); return; }
+            vscode.postMessage({ type: 'AGENT_REJECT_EDIT', editId });
         }
 
         function handleKeyDown(e) {

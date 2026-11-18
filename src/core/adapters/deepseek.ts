@@ -129,7 +129,7 @@ export class DeepSeekAdapter extends BaseProviderAdapter {
             try {
                 const parsed = JSON.parse(errBody);
                 if (parsed.error && parsed.error.message) errMsg = parsed.error.message;
-            } catch {}
+            } catch { }
             const err: any = new Error(errMsg);
             err.status = response.status;
             throw this.sanitizeError(err, apiKey);
@@ -233,7 +233,7 @@ export class DeepSeekAdapter extends BaseProviderAdapter {
             try {
                 const parsed = JSON.parse(errBody);
                 if (parsed.error && parsed.error.message) errMsg = parsed.error.message;
-            } catch {}
+            } catch { }
             const err: any = new Error(errMsg);
             err.status = response.status;
             throw this.sanitizeError(err, apiKey);
@@ -247,10 +247,10 @@ export class DeepSeekAdapter extends BaseProviderAdapter {
 
         const usage = data.usage
             ? {
-                  promptTokens: data.usage.prompt_tokens || 0,
-                  completionTokens: data.usage.completion_tokens || 0,
-                  totalTokens: data.usage.total_tokens || 0
-              }
+                promptTokens: data.usage.prompt_tokens || 0,
+                completionTokens: data.usage.completion_tokens || 0,
+                totalTokens: data.usage.total_tokens || 0
+            }
             : undefined;
 
         return {
@@ -307,7 +307,7 @@ export class DeepSeekAdapter extends BaseProviderAdapter {
             try {
                 const parsed = JSON.parse(errBody);
                 if (parsed.error && parsed.error.message) errMsg = parsed.error.message;
-            } catch {}
+            } catch { }
             const err: any = new Error(errMsg);
             err.status = response.status;
             throw this.sanitizeError(err, apiKey);
@@ -357,10 +357,10 @@ export class DeepSeekAdapter extends BaseProviderAdapter {
 
                         const usage = parsed.usage
                             ? {
-                                  promptTokens: parsed.usage.prompt_tokens || 0,
-                                  completionTokens: parsed.usage.completion_tokens || 0,
-                                  totalTokens: parsed.usage.total_tokens || 0
-                              }
+                                promptTokens: parsed.usage.prompt_tokens || 0,
+                                completionTokens: parsed.usage.completion_tokens || 0,
+                                totalTokens: parsed.usage.total_tokens || 0
+                            }
                             : undefined;
 
                         yield {

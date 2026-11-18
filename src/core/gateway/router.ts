@@ -11,6 +11,7 @@ import { HubError } from '../types/errors';
 import { WorkspaceGuardrails } from '../../workspace/guardrails';
 import { FileTreeExplorer } from '../../workspace/fileTree';
 import { DiffEngine } from '../../workspace/diffEngine';
+import { AgentLoop } from '../agents/agentLoop';
 
 export class GatewayRouter {
     private vault: SecretVault;
@@ -20,6 +21,7 @@ export class GatewayRouter {
     private guardrails?: WorkspaceGuardrails;
     private fileTree?: FileTreeExplorer;
     private diffEngine?: DiffEngine;
+    private agentLoop?: AgentLoop;
     private messages: ChatMessage[] = [];
     private activeProviderId = 'google-gemini';
     private activeModelId = 'gemini-3.8-flash';
@@ -40,6 +42,10 @@ export class GatewayRouter {
         this.fileTree = fileTree;
         this.diffEngine = diffEngine;
         this.fallbackEngine = new FallbackEngine(registry, vault, db);
+        // Initialize agent loop (all providers supported)
+        if (guardrails) {
+            this.agentLoop = new AgentLoop(guardrails, registry, vault, db);
+        }
     }
 
     public async handleWebviewMessage(
@@ -356,7 +362,149 @@ export class GatewayRouter {
                 });
                 break;
             }
+
+            // ── Phase 9: Agentic loop (all providers) ─────────────────────────
+
+            case 'AGENT_RUN': {
+                await this.handleAgentRun(msg, postMessage);
+                break;
+            }
+
+            case 'AGENT_APPROVE_EDIT': {
+                if (!this.agentLoop) return;
+                try {
+                    const executor = this.agentLoop.getToolExecutor();
+                    const res = await executor.approveEdit(msg.editId);
+                    postMessage({ type: 'AGENT_EDIT_APPROVED', editId: msg.editId, filePath: res.path, bytesWritten: res.bytesWritten });
+                    postMessage({ type: 'SHOW_NOTIFICATION', message: `Saved ${res.path} (${res.bytesWritten} bytes written).`, severity: 'info' });
+                    this.db.logAudit('REQUEST', 'agent', `Agent edit approved and saved: ${res.path}`);
+                } catch (err: any) {
+                    postMessage({ type: 'SHOW_NOTIFICATION', message: `Failed to save edit: ${err?.message || err}`, severity: 'error' });
+                }
+                break;
+            }
+
+            case 'AGENT_REJECT_EDIT': {
+                if (!this.agentLoop) return;
+                this.agentLoop.getToolExecutor().rejectEdit(msg.editId);
+                postMessage({ type: 'AGENT_EDIT_REJECTED', editId: msg.editId });
+                postMessage({ type: 'SHOW_NOTIFICATION', message: 'Edit proposal rejected.', severity: 'info' });
+                break;
+            }
+
+            case 'ATTACH_ACTIVE_ERROR': {
+                // Read the active editor diagnostics and return them as context to inject into the prompt
+                const editor = vscode.window.activeTextEditor;
+                if (!editor) {
+                    postMessage({ type: 'SHOW_NOTIFICATION', message: 'No active file open in the editor.', severity: 'warn' });
+                    return;
+                }
+                const doc = editor.document;
+                const relPath = this.guardrails ? this.guardrails.toRelative(doc.fileName) : doc.fileName;
+                const diags = vscode.languages.getDiagnostics(doc.uri);
+                const errors = diags
+                    .filter(d => d.severity === vscode.DiagnosticSeverity.Error || d.severity === vscode.DiagnosticSeverity.Warning)
+                    .map(d => `Line ${d.range.start.line + 1}: [${d.severity === 0 ? 'ERROR' : 'WARN'}] ${d.message}`)
+                    .join('\n');
+                const selection = editor.selection.isEmpty ? '' : doc.getText(editor.selection);
+                const context = [
+                    `Active file: ${relPath}`,
+                    `Language: ${doc.languageId}`,
+                    errors ? `Diagnostics:\n${errors}` : 'No diagnostics.',
+                    selection ? `Selected text:\n\`\`\`\n${selection}\n\`\`\`` : ''
+                ].filter(Boolean).join('\n');
+                postMessage({ type: 'ACTIVE_ERROR_CONTEXT', context });
+                break;
+            }
         }
+    }
+
+    private async handleAgentRun(
+        msg: { prompt: string; providerId: string; modelId: string; isDebugMode: boolean; clientMessageId?: string },
+        postMessage: (out: HostToWebviewMessage) => void
+    ): Promise<void> {
+        if (!this.agentLoop) {
+            postMessage({ type: 'SHOW_NOTIFICATION', message: 'Agent loop not available. Select a workspace folder first.', severity: 'warn' });
+            return;
+        }
+
+        const requestId = `agent_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        this.activeProviderId = msg.providerId;
+        this.activeModelId = msg.modelId;
+
+        // Add user message to chat history
+        const userMsg: ChatMessage = {
+            id: msg.clientMessageId || `msg_u_${Date.now()}`,
+            role: 'user',
+            content: msg.prompt,
+            timestamp: Date.now()
+        };
+        this.messages.push(userMsg);
+        postMessage({ type: 'USER_MESSAGE_COMMITTED', message: userMsg });
+
+        // Build conversation history (without the current prompt, it's passed separately)
+        const history = this.messages.slice(0, -1).map(m => ({
+            role: m.role as 'user' | 'assistant',
+            content: m.content
+        })).filter(m => m.role === 'user' || m.role === 'assistant');
+
+        // Accumulate tool steps for the final assistant message
+        const thinkingSteps: string[] = [];
+        let finalContent = '';
+
+        await this.agentLoop.run(
+            {
+                isDebugMode: msg.isDebugMode,
+                providerId: msg.providerId,
+                modelId: msg.modelId,
+                prompt: msg.prompt,
+                history
+            },
+            {
+                onThinking: (step) => {
+                    thinkingSteps.push(step);
+                    postMessage({ type: 'AGENT_THINKING', requestId, step });
+                },
+                onToolResult: (result) => {
+                    postMessage({
+                        type: 'AGENT_TOOL_RESULT',
+                        requestId,
+                        toolName: result.toolName,
+                        success: result.success,
+                        output: result.output.substring(0, 500) + (result.output.length > 500 ? '...' : '')
+                    });
+                },
+                onPendingEdit: (edit) => {
+                    postMessage({
+                        type: 'AGENT_EDIT_PROPOSAL',
+                        requestId,
+                        editId: edit.editId,
+                        filePath: edit.filePath,
+                        originalContent: edit.originalContent,
+                        proposedContent: edit.proposedContent,
+                        description: edit.description
+                    });
+                },
+                onFinalResponse: (text) => {
+                    finalContent = text;
+                    const assistantMsg: ChatMessage = {
+                        id: `msg_a_${Date.now()}`,
+                        role: 'assistant',
+                        content: text,
+                        providerId: msg.providerId,
+                        modelId: msg.modelId,
+                        timestamp: Date.now()
+                    };
+                    this.messages.push(assistantMsg);
+                    postMessage({ type: 'AGENT_RESPONSE', requestId, message: assistantMsg });
+                    this.db.logAudit('REQUEST', msg.providerId, `Agent response (${msg.isDebugMode ? 'debug' : 'assistant'} mode, ${thinkingSteps.length} tool calls)`, msg.modelId);
+                },
+                onError: (message) => {
+                    postMessage({ type: 'AGENT_ERROR', requestId, errorMessage: message });
+                    postMessage({ type: 'SHOW_NOTIFICATION', message: `Agent error: ${message}`, severity: 'error' });
+                }
+            }
+        );
     }
 
     private async handleSendPrompt(

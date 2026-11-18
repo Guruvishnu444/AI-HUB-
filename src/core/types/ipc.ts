@@ -77,7 +77,12 @@ export type WebviewToHostMessage =
     | { type: 'WORKSPACE_PICK_FOLDER' }
     // Phase 8: Diff / Edit
     | { type: 'WORKSPACE_APPROVE_EDIT'; editId: string }
-    | { type: 'WORKSPACE_REJECT_EDIT'; editId: string };
+    | { type: 'WORKSPACE_REJECT_EDIT'; editId: string }
+    // Phase 9: Agentic Function Calling (all providers)
+    | { type: 'AGENT_RUN'; prompt: string; providerId: string; modelId: string; isDebugMode: boolean; clientMessageId?: string }
+    | { type: 'AGENT_APPROVE_EDIT'; editId: string }
+    | { type: 'AGENT_REJECT_EDIT'; editId: string }
+    | { type: 'ATTACH_ACTIVE_ERROR' };
 
 /**
  * Messages sent from Extension Host to Webview
@@ -133,4 +138,13 @@ export type HostToWebviewMessage =
     // Phase 8
     | { type: 'DIFF_PROPOSAL'; editId: string; diff: FileDiff }
     | { type: 'EDIT_APPROVED'; editId: string; path: string; bytesWritten: number }
-    | { type: 'EDIT_REJECTED'; editId: string };
+    | { type: 'EDIT_REJECTED'; editId: string }
+    // Phase 9: Agentic loop (all providers)
+    | { type: 'AGENT_THINKING'; requestId: string; step: string }
+    | { type: 'AGENT_TOOL_RESULT'; requestId: string; toolName: string; success: boolean; output: string }
+    | { type: 'AGENT_EDIT_PROPOSAL'; requestId: string; editId: string; filePath: string; originalContent: string; proposedContent: string; description: string }
+    | { type: 'AGENT_EDIT_APPROVED'; editId: string; filePath: string; bytesWritten: number }
+    | { type: 'AGENT_EDIT_REJECTED'; editId: string }
+    | { type: 'AGENT_RESPONSE'; requestId: string; message: ChatMessage }
+    | { type: 'AGENT_ERROR'; requestId: string; errorMessage: string }
+    | { type: 'ACTIVE_ERROR_CONTEXT'; context: string };
