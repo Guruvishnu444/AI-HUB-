@@ -98,8 +98,21 @@ export class FallbackEngine {
             const adapter = this.registry.getAdapter(currentProviderId);
             if (!adapter) continue;
 
-            // 4. Resolve candidate models for this provider
-            const availableModels = this.db.getModels().filter(m => m.providerId === currentProviderId && m.isEnabled);
+            // 4. Resolve candidate models for this provider (only usable chat/reasoning models)
+            const availableModels = this.db.getModels().filter(m => {
+                if (m.providerId !== currentProviderId || !m.isEnabled) return false;
+                if (!m.isCustom && (
+                    m.id.includes('embedding') ||
+                    m.id.includes('aqa') ||
+                    m.id.includes('imagen') ||
+                    m.id.includes('whisper') ||
+                    m.id.includes('bison') ||
+                    (m.providerId === 'google-gemini' && m.id.includes('gemma'))
+                )) {
+                    return false;
+                }
+                return true;
+            });
             if (availableModels.length === 0) continue;
 
             const modelsToAttempt: string[] = [];

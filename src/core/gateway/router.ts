@@ -42,6 +42,12 @@ export class GatewayRouter {
         this.fileTree = fileTree;
         this.diffEngine = diffEngine;
         this.fallbackEngine = new FallbackEngine(registry, vault, db);
+        // Restore last selected active model from database
+        const savedModel = db.getActiveModel();
+        if (savedModel && savedModel.providerId && savedModel.modelId) {
+            this.activeProviderId = savedModel.providerId;
+            this.activeModelId = savedModel.modelId;
+        }
         // Initialize agent loop (all providers supported)
         if (guardrails) {
             this.agentLoop = new AgentLoop(guardrails, registry, vault, db);
@@ -414,6 +420,41 @@ export class GatewayRouter {
                     selection ? `Selected text:\n\`\`\`\n${selection}\n\`\`\`` : ''
                 ].filter(Boolean).join('\n');
                 postMessage({ type: 'ACTIVE_ERROR_CONTEXT', context });
+                break;
+            }
+
+            case 'SET_ACTIVE_MODEL': {
+                this.activeProviderId = msg.providerId;
+                this.activeModelId = msg.modelId;
+                await this.db.setActiveModel(msg.providerId, msg.modelId);
+                break;
+            }
+
+            case 'DELETE_PROVIDER': {
+                await this.vault.deleteKey(msg.providerId);
+                await this.db.deleteProvider(msg.providerId);
+                postMessage({ type: 'SHOW_NOTIFICATION', message: `Provider "${msg.providerId}" and its model holder removed.`, severity: 'info' });
+                await this.syncState(postMessage);
+                break;
+            }
+
+            case 'PURGE_UNCONFIGURED_PROVIDERS': {
+                const providers = this.db.getProviders();
+                const configured: string[] = [];
+                for (const p of providers) {
+                    if (await this.vault.hasKey(p.id)) configured.push(p.id);
+                }
+                const count = await this.db.purgeUnconfiguredProviders(configured);
+                await this.db.purgeUnwantedModels();
+                postMessage({ type: 'SHOW_NOTIFICATION', message: `Cleaned up ${count} unused providers and pruned unwanted models.`, severity: 'info' });
+                await this.syncState(postMessage);
+                break;
+            }
+
+            case 'PURGE_UNWANTED_MODELS': {
+                const count = await this.db.purgeUnwantedModels();
+                postMessage({ type: 'SHOW_NOTIFICATION', message: `Purged ${count} non-chat models. Only verified usable models remain.`, severity: 'info' });
+                await this.syncState(postMessage);
                 break;
             }
         }

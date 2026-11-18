@@ -82,7 +82,12 @@ export type WebviewToHostMessage =
     | { type: 'AGENT_RUN'; prompt: string; providerId: string; modelId: string; isDebugMode: boolean; clientMessageId?: string }
     | { type: 'AGENT_APPROVE_EDIT'; editId: string }
     | { type: 'AGENT_REJECT_EDIT'; editId: string }
-    | { type: 'ATTACH_ACTIVE_ERROR' };
+    | { type: 'ATTACH_ACTIVE_ERROR' }
+    // Model & Provider Management
+    | { type: 'SET_ACTIVE_MODEL'; providerId: string; modelId: string }
+    | { type: 'DELETE_PROVIDER'; providerId: string }
+    | { type: 'PURGE_UNCONFIGURED_PROVIDERS' }
+    | { type: 'PURGE_UNWANTED_MODELS' };
 
 /**
  * Messages sent from Extension Host to Webview

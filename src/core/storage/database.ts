@@ -33,6 +33,8 @@ export class HubDatabase {
     // In-memory state synchronized to storage
     private providers: Map<string, ProviderConfig> = new Map();
     private models: Map<string, ModelMetadata> = new Map();
+    private activeProviderId: string = 'google-gemini';
+    private activeModelId: string = 'gemini-3.8-flash';
     private fallbackConfig: FallbackConfig = {
         enabled: true,
         priorityOrder: ['google-gemini', 'deepseek'],
@@ -316,13 +318,25 @@ export class HubDatabase {
                         m.id.includes('flash-preview') ||
                         m.id.includes('pro-preview');
 
-                    if (replacement || isOldGemini) {
-                        // Delete the stale model so it never shows in the dropdown
+                    // Filter out unwanted, non-chat or non-generative models
+                    const isUnwanted = !m.isCustom && (
+                        m.id.includes('embedding') ||
+                        m.id.includes('aqa') ||
+                        m.id.includes('imagen') ||
+                        m.id.includes('whisper') ||
+                        m.id.includes('bison') ||
+                        (m.providerId === 'google-gemini' && m.id.includes('gemma'))
+                    );
+
+                    if (replacement || isOldGemini || isUnwanted) {
+                        // Delete the stale/unwanted model so it never shows in active models
                         this.models.delete(m.id);
-                        const targetId = replacement || 'gemini-3.8-flash';
-                        const freshSeed = Array.from(this.models.values()).find(s => s.id === targetId);
-                        if (freshSeed) {
-                            this.models.set(freshSeed.id, freshSeed);
+                        if (replacement || isOldGemini) {
+                            const targetId = replacement || 'gemini-3.8-flash';
+                            const freshSeed = Array.from(this.models.values()).find(s => s.id === targetId);
+                            if (freshSeed) {
+                                this.models.set(freshSeed.id, freshSeed);
+                            }
                         }
                         didMigrate = true;
                         continue;
@@ -341,6 +355,13 @@ export class HubDatabase {
             if (parsed.fallbackConfig) {
                 this.fallbackConfig = parsed.fallbackConfig;
             }
+
+            if (parsed.activeProviderId && this.providers.has(parsed.activeProviderId)) {
+                this.activeProviderId = parsed.activeProviderId;
+            }
+            if (parsed.activeModelId && this.models.has(parsed.activeModelId)) {
+                this.activeModelId = parsed.activeModelId;
+            }
         } catch {
             // First time startup: write defaults to disk
             await this.persistState();
@@ -353,6 +374,8 @@ export class HubDatabase {
                 providers: Array.from(this.providers.values()),
                 models: Array.from(this.models.values()),
                 fallbackConfig: this.fallbackConfig,
+                activeProviderId: this.activeProviderId,
+                activeModelId: this.activeModelId,
                 lastUpdated: Date.now()
             };
             const bytes = new TextEncoder().encode(JSON.stringify(payload, null, 2));
@@ -375,6 +398,48 @@ export class HubDatabase {
         await this.persistState();
     }
 
+    public async deleteProvider(providerId: string): Promise<void> {
+        this.providers.delete(providerId);
+        // Delete all models belonging to this provider
+        for (const [id, m] of this.models.entries()) {
+            if (m.providerId === providerId) {
+                this.models.delete(id);
+            }
+        }
+        // Remove from fallback priority order
+        this.fallbackConfig.priorityOrder = this.fallbackConfig.priorityOrder.filter(id => id !== providerId);
+        // If the deleted provider was active, reset to google-gemini
+        if (this.activeProviderId === providerId) {
+            this.activeProviderId = 'google-gemini';
+            this.activeModelId = 'gemini-3.8-flash';
+        }
+        await this.persistState();
+    }
+
+    public async purgeUnconfiguredProviders(configuredIds: string[]): Promise<number> {
+        let removed = 0;
+        const configuredSet = new Set(configuredIds);
+        for (const [pId, p] of this.providers.entries()) {
+            const isLocal = p.baseUrl?.includes('localhost') || p.baseUrl?.includes('127.0.0.1');
+            // Keep google-gemini as primary baseline; delete other unconfigured providers
+            if (pId !== 'google-gemini' && !configuredSet.has(pId) && !isLocal) {
+                await this.deleteProvider(pId);
+                removed++;
+            }
+        }
+        return removed;
+    }
+
+    public getActiveModel(): { providerId: string; modelId: string } {
+        return { providerId: this.activeProviderId, modelId: this.activeModelId };
+    }
+
+    public async setActiveModel(providerId: string, modelId: string): Promise<void> {
+        this.activeProviderId = providerId;
+        this.activeModelId = modelId;
+        await this.persistState();
+    }
+
     public getModels(): ModelMetadata[] {
         return Array.from(this.models.values());
     }
@@ -386,6 +451,33 @@ export class HubDatabase {
     public async addOrUpdateModel(model: ModelMetadata): Promise<void> {
         this.models.set(model.id, model);
         await this.persistState();
+    }
+
+    public async deleteModel(modelId: string): Promise<void> {
+        this.models.delete(modelId);
+        await this.persistState();
+    }
+
+    public async purgeUnwantedModels(): Promise<number> {
+        let removed = 0;
+        for (const [id, m] of this.models.entries()) {
+            const isUnwanted = !m.isCustom && (
+                m.id.includes('embedding') ||
+                m.id.includes('aqa') ||
+                m.id.includes('imagen') ||
+                m.id.includes('whisper') ||
+                m.id.includes('bison') ||
+                (m.providerId === 'google-gemini' && m.id.includes('gemma'))
+            );
+            if (isUnwanted) {
+                this.models.delete(id);
+                removed++;
+            }
+        }
+        if (removed > 0) {
+            await this.persistState();
+        }
+        return removed;
     }
 
     public async setModelEnabled(modelId: string, enabled: boolean): Promise<void> {

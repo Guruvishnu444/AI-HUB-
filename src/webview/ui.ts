@@ -974,16 +974,45 @@ export function getWebviewHtml(): string {
             ]);
 
             let allModels = [];
+            // ONLY display models from providers that are enabled AND have an API key configured (or local servers)
             state.providers.forEach(p => {
-                if (p.config.isEnabled) {
+                const isLocal = p.config.baseUrl && (p.config.baseUrl.includes('localhost') || p.config.baseUrl.includes('127.0.0.1'));
+                if (p.config.isEnabled && (p.isKeyConfigured || isLocal)) {
                     p.models.forEach(m => {
-                        // Skip any deprecated model IDs
-                        if (m.isEnabled && !deprecatedIds.has(m.id)) {
+                        const isUnwanted = !m.isCustom && (
+                            m.id.includes('embedding') ||
+                            m.id.includes('aqa') ||
+                            m.id.includes('imagen') ||
+                            m.id.includes('whisper') ||
+                            m.id.includes('bison') ||
+                            (m.providerId === 'google-gemini' && m.id.includes('gemma'))
+                        );
+                        if (m.isEnabled && !deprecatedIds.has(m.id) && !isUnwanted) {
                             allModels.push({ ...m, providerName: p.config.name });
                         }
                     });
                 }
             });
+
+            // If no configured provider models found, show Google Gemini baseline
+            if (allModels.length === 0) {
+                const geminiProvider = state.providers.find(p => p.config.id === 'google-gemini');
+                if (geminiProvider) {
+                    geminiProvider.models.forEach(m => {
+                        if (m.isEnabled && !deprecatedIds.has(m.id) && (m.id.includes('3.8') || m.id.includes('flash') || m.id.includes('pro'))) {
+                            allModels.push({ ...m, providerName: geminiProvider.config.name });
+                        }
+                    });
+                }
+            }
+
+            // Ensure activeModelId is one of the available usable models
+            const match = allModels.find(m => m.providerId === state.activeProviderId && m.id === state.activeModelId);
+            if (!match && allModels.length > 0) {
+                state.activeProviderId = allModels[0].providerId;
+                state.activeModelId = allModels[0].id;
+                vscode.postMessage({ type: 'SET_ACTIVE_MODEL', providerId: state.activeProviderId, modelId: state.activeModelId });
+            }
 
             // If the currently selected model is deprecated, reset to gemini-3.8-flash
             if (deprecatedIds.has(state.activeModelId)) {
@@ -1010,6 +1039,7 @@ export function getWebviewHtml(): string {
             const [pId, mId] = select.value.split('::');
             state.activeProviderId = pId;
             state.activeModelId = mId;
+            vscode.postMessage({ type: 'SET_ACTIVE_MODEL', providerId: pId, modelId: mId });
 
             const provider = state.providers.find(p => p.config.id === pId);
             const model = provider?.models?.find(m => m.id === mId);
@@ -1028,17 +1058,34 @@ export function getWebviewHtml(): string {
 
         function renderProviders() {
             const container = document.getElementById('providers-list');
+            if (!container) return;
             container.innerHTML = '';
+
+            // Clean action toolbar for provider & model hygiene
+            const topBar = document.createElement('div');
+            topBar.style.cssText = 'display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; gap:8px; flex-wrap:wrap;';
+            topBar.innerHTML = \`
+                <span style="font-size:12px; font-weight:600; opacity:0.85;">Registered Providers (\${state.providers.length})</span>
+                <div style="display:flex; gap:6px;">
+                    <button class="secondary" style="font-size:11px; padding:3px 8px;" onclick="purgeUnusedProviders()">Clean Unused Providers</button>
+                    <button class="secondary" style="font-size:11px; padding:3px 8px;" onclick="purgeUnwantedModels()">Purge Non-Chat Models</button>
+                </div>
+            \`;
+            container.appendChild(topBar);
 
             state.providers.forEach(p => {
                 const card = document.createElement('div');
                 card.className = 'card';
+                const canRemove = p.config.id !== 'google-gemini' && !p.isKeyConfigured;
                 card.innerHTML = \`
                     <div class="card-header">
                         <span class="card-title">\${escapeHtml(p.config.name)} (\${p.config.id})</span>
-                        <span class="badge \${p.isKeyConfigured ? 'badge-green' : 'badge-red'}">
-                            \${p.isKeyConfigured ? 'KEY STORED' : 'NO KEY CONFIGURED'}
-                        </span>
+                        <div style="display:flex; gap:6px; align-items:center;">
+                            <span class="badge \${p.isKeyConfigured ? 'badge-green' : 'badge-red'}">
+                                \${p.isKeyConfigured ? 'KEY STORED' : 'NO KEY CONFIGURED'}
+                            </span>
+                            \${canRemove ? \`<button class="danger" style="font-size:10px; padding:2px 6px;" onclick="deleteProvider('\${p.config.id}')">Remove</button>\` : ''}
+                        </div>
                     </div>
                     <div style="font-size:11px; opacity:0.75; margin-bottom:6px;">
                         Endpoint: <code>\${escapeHtml(p.config.baseUrl)}</code> | Models: \${p.models.length}
@@ -1421,6 +1468,18 @@ export function getWebviewHtml(): string {
 
         function discoverModels(providerId) {
             vscode.postMessage({ type: 'DISCOVER_MODELS', providerId });
+        }
+
+        function deleteProvider(providerId) {
+            vscode.postMessage({ type: 'DELETE_PROVIDER', providerId });
+        }
+
+        function purgeUnusedProviders() {
+            vscode.postMessage({ type: 'PURGE_UNCONFIGURED_PROVIDERS' });
+        }
+
+        function purgeUnwantedModels() {
+            vscode.postMessage({ type: 'PURGE_UNWANTED_MODELS' });
         }
 
         /* Workspace & Diff Subsystem */
