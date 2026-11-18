@@ -57,6 +57,7 @@
     "vscode:prepublish": "node ./scripts/build.js",
     "compile": "node ./scripts/build.js",
     "watch": "node ./scripts/build.js --watch",
+    "test": "node ./scripts/test_all.js",
     "build:vsix": "npx @vscode/vsce package --no-dependencies"
   },
   "devDependencies": {
