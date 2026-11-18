@@ -173,16 +173,33 @@ export class FallbackEngine {
                     } catch (err: any) {
                         lastError = err;
                         const hubError: HubError = err instanceof HubError ? err : (err as any);
+                        const errMsg = (hubError?.details?.message || String(err)).toLowerCase();
                         const isRetryable = hubError?.details?.isRetryable;
 
-                        if (!isRetryable) {
-                            // Non-retryable error (e.g. 401 Auth Failed or Insufficient Balance) -> record and try next
+                        // Daily quota limits and exhausted credits cannot be resolved by 3-second retries
+                        const isExhaustedQuota = errMsg.includes('quota') ||
+                                                errMsg.includes('resource_exhausted') ||
+                                                errMsg.includes('free_tier_requests') ||
+                                                errMsg.includes('daily') ||
+                                                errMsg.includes('per day') ||
+                                                errMsg.includes('limit exceeded') ||
+                                                errMsg.includes('insufficient');
+
+                        if (!isRetryable || isExhaustedQuota) {
+                            // Non-retryable or permanent quota error -> record failure and immediately switch to next model/provider
                             this.circuitBreaker.recordFailure(currentProviderId);
-                            this.db.logAudit('ERROR', currentProviderId, hubError.details?.message || String(err), targetModelId);
-                            break; // try next candidate model or provider
+                            this.db.logAudit(
+                                'ERROR',
+                                currentProviderId,
+                                isExhaustedQuota
+                                    ? `Quota exceeded for ${targetModelId}. Immediately switching to alternate model/provider: ${hubError?.details?.message || String(err)}`
+                                    : (hubError?.details?.message || String(err)),
+                                targetModelId
+                            );
+                            break; // try next candidate model or provider immediately
                         }
 
-                        // Retryable error: handle 429 / 503 backoff
+                        // Short-term rate limit or server hiccup: handle 429 / 503 backoff
                         attempt++;
                         this.circuitBreaker.recordFailure(currentProviderId);
 

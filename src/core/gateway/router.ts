@@ -526,19 +526,26 @@ export class GatewayRouter {
                         description: edit.description
                     });
                 },
-                onFinalResponse: (text) => {
+                onFinalResponse: (text, resolvedProviderId, resolvedModelId) => {
                     finalContent = text;
+                    const finalProviderId = resolvedProviderId || msg.providerId;
+                    const finalModelId = resolvedModelId || msg.modelId;
                     const assistantMsg: ChatMessage = {
                         id: `msg_a_${Date.now()}`,
                         role: 'assistant',
                         content: text,
-                        providerId: msg.providerId,
-                        modelId: msg.modelId,
+                        providerId: finalProviderId,
+                        modelId: finalModelId,
                         timestamp: Date.now()
                     };
                     this.messages.push(assistantMsg);
                     postMessage({ type: 'AGENT_RESPONSE', requestId, message: assistantMsg });
-                    this.db.logAudit('REQUEST', msg.providerId, `Agent response (${msg.isDebugMode ? 'debug' : 'assistant'} mode, ${thinkingSteps.length} tool calls)`, msg.modelId);
+                    this.db.logAudit('REQUEST', finalProviderId, `Agent response (${msg.isDebugMode ? 'debug' : 'assistant'} mode, ${thinkingSteps.length} tool calls)`, finalModelId);
+                    if (finalProviderId !== msg.providerId || finalModelId !== msg.modelId) {
+                        this.activeProviderId = finalProviderId;
+                        this.activeModelId = finalModelId;
+                        this.syncState(postMessage);
+                    }
                 },
                 onError: (message) => {
                     postMessage({ type: 'AGENT_ERROR', requestId, errorMessage: message });

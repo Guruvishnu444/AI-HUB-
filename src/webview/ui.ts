@@ -658,6 +658,8 @@ export function getWebviewHtml(): string {
             pendingAgentEdits: {}      // editId -> { filePath, originalContent, proposedContent, description }
         };
 
+        const expandedProviders = new Set(['google-gemini']);
+
         function switchTab(tabName) {
             document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
             document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
@@ -1077,6 +1079,62 @@ export function getWebviewHtml(): string {
                 const card = document.createElement('div');
                 card.className = 'card';
                 const canRemove = p.config.id !== 'google-gemini' && !p.isKeyConfigured;
+                const isExpanded = expandedProviders.has(p.config.id);
+
+                let modelsHtml = '';
+                if (isExpanded) {
+                    if (!p.models || p.models.length === 0) {
+                        modelsHtml = \`
+                            <div style="margin-top:10px; padding:8px; border-top:1px solid rgba(255,255,255,0.08); font-size:11px; opacity:0.7;">
+                                No models registered yet. Click "Discover Models" to scan available models.
+                            </div>
+                        \`;
+                    } else {
+                        const modelRows = p.models.map(m => {
+                            const isCurrentActive = state.activeProviderId === p.config.id && state.activeModelId === m.id;
+                            const caps = m.capabilities || {};
+                            const ctxK = Math.round((caps.maxContextTokens || 128000) / 1024);
+                            return \`
+                                <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 8px; margin-bottom:4px; background:rgba(255,255,255,0.02); border-radius:4px; border:1px solid \${isCurrentActive ? 'var(--vscode-focusBorder, #007acc)' : 'rgba(255,255,255,0.06)'};">
+                                    <div style="flex:1; min-width:0; margin-right:8px;">
+                                        <div style="font-size:12px; font-weight:600; display:flex; align-items:center; gap:6px;">
+                                            <span>\${escapeHtml(m.displayName || m.id)}</span>
+                                            \${isCurrentActive ? '<span class="badge badge-green" style="font-size:9px; padding:1px 5px;">ACTIVE</span>' : ''}
+                                            \${!m.isEnabled ? '<span class="badge badge-amber" style="font-size:9px; padding:1px 5px;">DISABLED</span>' : ''}
+                                        </div>
+                                        <div style="font-size:10px; opacity:0.65; font-family:monospace; margin-top:2px;">\${escapeHtml(m.id)}</div>
+                                        <div style="display:flex; gap:4px; margin-top:4px; flex-wrap:wrap;">
+                                            \${caps.supportsVision ? '<span class="badge badge-blue" style="font-size:9px;">Vision</span>' : ''}
+                                            \${caps.supportsReasoningContent ? '<span class="badge badge-amber" style="font-size:9px;">Reasoning</span>' : ''}
+                                            \${caps.supportsTools ? '<span class="badge badge-green" style="font-size:9px;">Tools</span>' : ''}
+                                            <span class="badge badge-gray" style="font-size:9px;">\${ctxK}k Ctx</span>
+                                        </div>
+                                    </div>
+                                    <div style="display:flex; gap:6px; align-items:center; flex-shrink:0;">
+                                        <button class="secondary" style="font-size:10px; padding:2px 8px;" onclick="toggleModel('\${escapeHtml(m.id)}', \${!m.isEnabled})">
+                                            \${m.isEnabled ? 'Disable' : 'Enable'}
+                                        </button>
+                                        \${!isCurrentActive ? \`
+                                            <button class="primary" style="font-size:10px; padding:2px 8px;" onclick="setActiveModelDirect('\${escapeHtml(p.config.id)}', '\${escapeHtml(m.id)}')">
+                                                Use Model
+                                            </button>
+                                        \` : ''}
+                                    </div>
+                                </div>
+                            \`;
+                        }).join('');
+
+                        modelsHtml = \`
+                            <div style="margin-top:10px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.08);">
+                                <div style="font-size:11px; font-weight:600; margin-bottom:8px; opacity:0.85;">Discovered Models (\${p.models.length}):</div>
+                                <div style="max-height:260px; overflow-y:auto; padding-right:2px;">
+                                    \${modelRows}
+                                </div>
+                            </div>
+                        \`;
+                    }
+                }
+
                 card.innerHTML = \`
                     <div class="card-header">
                         <span class="card-title">\${escapeHtml(p.config.name)} (\${p.config.id})</span>
@@ -1098,7 +1156,9 @@ export function getWebviewHtml(): string {
                     <div class="btn-group">
                         <button class="secondary" onclick="testConnection('\${p.config.id}')">Ping Connection</button>
                         <button class="secondary" onclick="discoverModels('\${p.config.id}')">Discover Models (\${p.models.length})</button>
+                        <button class="secondary" onclick="toggleModelList('\${p.config.id}')">\${isExpanded ? 'Hide Models' : 'Show Models'} (\${p.models.length})</button>
                     </div>
+                    \${modelsHtml}
                 \`;
                 container.appendChild(card);
             });
@@ -1467,7 +1527,31 @@ export function getWebviewHtml(): string {
         }
 
         function discoverModels(providerId) {
+            expandedProviders.add(providerId);
+            showToast('Discovering models from ' + providerId + '...');
             vscode.postMessage({ type: 'DISCOVER_MODELS', providerId });
+        }
+
+        function toggleModelList(providerId) {
+            if (expandedProviders.has(providerId)) {
+                expandedProviders.delete(providerId);
+            } else {
+                expandedProviders.add(providerId);
+            }
+            renderProviders();
+        }
+
+        function setActiveModelDirect(providerId, modelId) {
+            state.activeProviderId = providerId;
+            state.activeModelId = modelId;
+            vscode.postMessage({ type: 'SET_ACTIVE_MODEL', providerId, modelId });
+            renderModelSelector();
+            renderProviders();
+            showToast('Active model set to ' + modelId);
+        }
+
+        function toggleModel(modelId, enabled) {
+            vscode.postMessage({ type: 'TOGGLE_MODEL', modelId, enabled });
         }
 
         function deleteProvider(providerId) {

@@ -200,8 +200,39 @@ export interface AgentLoopCallbacks {
     onThinking: (step: string) => void;
     onToolResult: (result: ToolResult) => void;
     onPendingEdit: (edit: PendingEdit) => void;
-    onFinalResponse: (text: string) => void;
+    onFinalResponse: (text: string, resolvedProviderId?: string, resolvedModelId?: string) => void;
     onError: (message: string) => void;
+}
+
+function isUsableChatModel(id: string, providerId: string): boolean {
+    const lower = id.toLowerCase();
+    if (lower.includes('embedding') || lower.includes('aqa') || lower.includes('imagen') || lower.includes('bison') || lower.includes('whisper') || lower.includes('tts') || lower.includes('moderation') || lower.includes('dall-e')) {
+        return false;
+    }
+    if (providerId === 'google-gemini' && lower.includes('gemma')) {
+        return false;
+    }
+    return true;
+}
+
+function isSwitchableError(status: number, message: string): boolean {
+    if (status === 429 || status === 503 || status === 500 || status === 502 || status === 504 || status === 404) return true;
+    const lower = message.toLowerCase();
+    return lower.includes('quota') ||
+           lower.includes('rate limit') ||
+           lower.includes('resource_exhausted') ||
+           lower.includes('free_tier_requests') ||
+           lower.includes('high demand') ||
+           lower.includes('overloaded') ||
+           lower.includes('unavailable') ||
+           lower.includes('exceeded your current quota') ||
+           lower.includes('capacity') ||
+           lower.includes('insufficient_quota') ||
+           lower.includes('billing') ||
+           lower.includes('credit') ||
+           lower.includes('fetch failed') ||
+           lower.includes('connection refused') ||
+           lower.includes('enotfound');
 }
 
 // ─── AgentLoop ────────────────────────────────────────────────────────────────
@@ -224,35 +255,122 @@ export class AgentLoop {
     }
 
     public async run(options: AgentLoopOptions, callbacks: AgentLoopCallbacks): Promise<void> {
-        const { isDebugMode, providerId, modelId, prompt, history } = options;
+        const { isDebugMode, prompt, history } = options;
         const maxIter = options.maxIterations ?? 10;
-
-        const apiKey = await this.vault.getKey(providerId);
-        if (!apiKey) {
-            callbacks.onError(`No API key configured for ${providerId}. Please add it in Provider Manager.`);
-            return;
-        }
-        const cleanedKey = cleanApiKey(apiKey);
-
-        const providerConfig = this.db.getProvider(providerId);
-        if (!providerConfig) {
-            callbacks.onError(`Provider "${providerId}" not found.`);
-            return;
-        }
-
-        const protocol = detectProtocol(providerId, providerConfig.protocol, providerConfig.baseUrl);
         const systemPrompt = isDebugMode ? DEBUGGER_SYSTEM_PROMPT : ASSISTANT_SYSTEM_PROMPT;
 
-        switch (protocol) {
-            case 'gemini':
-                return this.runGeminiLoop(cleanedKey, modelId, providerConfig.baseUrl, systemPrompt, prompt, history, maxIter, callbacks);
-            case 'openai':
-                return this.runOpenAILoop(cleanedKey, modelId, providerConfig.baseUrl, systemPrompt, prompt, history, maxIter, callbacks, providerConfig.id);
-            case 'anthropic':
-                return this.runAnthropicLoop(cleanedKey, modelId, providerConfig.baseUrl, systemPrompt, prompt, history, maxIter, callbacks);
-            case 'react-fallback':
-                return this.runReActLoop(cleanedKey, modelId, providerConfig, systemPrompt, prompt, history, maxIter, callbacks);
+        // Build ordered candidate list of models and providers for automated fallback
+        interface CandidateTarget {
+            providerId: string;
+            modelId: string;
         }
+
+        const candidates: CandidateTarget[] = [];
+        candidates.push({ providerId: options.providerId, modelId: options.modelId });
+
+        // 1. Alternate enabled chat models for the current provider
+        const currentProviderModels = this.db.getModels().filter(m =>
+            m.providerId === options.providerId &&
+            m.isEnabled &&
+            m.id !== options.modelId &&
+            isUsableChatModel(m.id, m.providerId)
+        );
+        for (const m of currentProviderModels) {
+            candidates.push({ providerId: options.providerId, modelId: m.id });
+        }
+
+        // 2. Alternate configured providers from fallbackConfig priorityOrder
+        const fallbackConfig = this.db.getFallbackConfig();
+        const priorityOrder = fallbackConfig.priorityOrder || [];
+        for (const pId of priorityOrder) {
+            if (pId === options.providerId) continue;
+            const key = await this.vault.getKey(pId);
+            const cfg = this.db.getProvider(pId);
+            const isLocal = cfg?.baseUrl?.includes('localhost') || cfg?.baseUrl?.includes('127.0.0.1');
+            if (!key && !isLocal) continue;
+
+            const altModels = this.db.getModels().filter(m =>
+                m.providerId === pId &&
+                m.isEnabled &&
+                isUsableChatModel(m.id, m.providerId)
+            );
+            for (const am of altModels) {
+                candidates.push({ providerId: pId, modelId: am.id });
+            }
+        }
+
+        let lastError: any = null;
+
+        for (let cIdx = 0; cIdx < candidates.length; cIdx++) {
+            const candidate = candidates[cIdx];
+            const isFallback = cIdx > 0;
+
+            const apiKey = await this.vault.getKey(candidate.providerId) || '';
+            const cleanedKey = cleanApiKey(apiKey);
+            const providerConfig = this.db.getProvider(candidate.providerId);
+            if (!providerConfig) continue;
+
+            const isLocal = providerConfig.baseUrl.includes('localhost') || providerConfig.baseUrl.includes('127.0.0.1');
+            if (!cleanedKey && !isLocal) {
+                if (!isFallback) {
+                    callbacks.onError(`No API key configured for ${candidate.providerId}. Please add it in Provider Manager.`);
+                    return;
+                }
+                continue;
+            }
+
+            if (isFallback) {
+                callbacks.onThinking(`Automatically falling back to ${providerConfig.name} (${candidate.modelId})...`);
+            }
+
+            const protocol = detectProtocol(candidate.providerId, providerConfig.protocol, providerConfig.baseUrl);
+
+            try {
+                let responseText = '';
+                if (protocol === 'gemini') {
+                    responseText = await this.runGeminiLoop(cleanedKey, candidate.modelId, providerConfig.baseUrl, systemPrompt, prompt, history, maxIter, callbacks);
+                } else if (protocol === 'openai') {
+                    responseText = await this.runOpenAILoop(cleanedKey, candidate.modelId, providerConfig.baseUrl, systemPrompt, prompt, history, maxIter, callbacks, providerConfig.id);
+                } else if (protocol === 'anthropic') {
+                    responseText = await this.runAnthropicLoop(cleanedKey, candidate.modelId, providerConfig.baseUrl, systemPrompt, prompt, history, maxIter, callbacks);
+                } else {
+                    responseText = await this.runReActLoop(cleanedKey, candidate.modelId, providerConfig, systemPrompt, prompt, history, maxIter, callbacks);
+                }
+
+                if (isFallback) {
+                    await this.db.setActiveModel(candidate.providerId, candidate.modelId);
+                    this.db.logAudit(
+                        'FALLBACK',
+                        candidate.providerId,
+                        `Agent resolved via fallback from ${options.providerId} (${options.modelId}) to ${candidate.providerId} (${candidate.modelId})`,
+                        candidate.modelId
+                    );
+                }
+
+                callbacks.onFinalResponse(responseText, candidate.providerId, candidate.modelId);
+                return;
+            } catch (err: any) {
+                lastError = err;
+                const msg = err?.message || String(err);
+                const status = err?.status || 0;
+                const isSwitchable = err?.isSwitchable ?? isSwitchableError(status, msg);
+
+                this.db.logAudit('ERROR', candidate.providerId, `Agent attempt failed on ${candidate.modelId}: ${msg}`, candidate.modelId);
+
+                if (isSwitchable && cIdx + 1 < candidates.length) {
+                    const nextCandidate = candidates[cIdx + 1];
+                    const nextProvider = this.db.getProvider(nextCandidate.providerId);
+                    callbacks.onThinking(`Model ${candidate.modelId} quota exceeded or unavailable. Switching to ${nextProvider?.name || nextCandidate.providerId} (${nextCandidate.modelId})...`);
+                    continue;
+                }
+
+                if (!isSwitchable) {
+                    break;
+                }
+            }
+        }
+
+        callbacks.onError(lastError?.message || 'All available models in the fallback chain failed.');
     }
 
     // ─── Gemini Loop ────────────────────────────────────────────────────────────
@@ -262,7 +380,7 @@ export class AgentLoop {
         systemPrompt: string, prompt: string,
         history: Array<{ role: 'user' | 'assistant'; content: string }>,
         maxIter: number, callbacks: AgentLoopCallbacks
-    ): Promise<void> {
+    ): Promise<string> {
         const cleanModel = modelId.replace(/^models\//, '');
         const url = `${baseUrl.replace(/\/+$/, '')}/models/${cleanModel}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
@@ -280,8 +398,7 @@ export class AgentLoop {
         };
 
         for (let i = 0; i < maxIter; i++) {
-            const data = await this.fetchJson(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey }, body: JSON.stringify(payload) }, callbacks);
-            if (!data) return;
+            const data = await this.fetchJson(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey }, body: JSON.stringify(payload) });
 
             const parts: any[] = data.candidates?.[0]?.content?.parts || [];
             const functionCallParts = parts.filter((p: any) => p.functionCall);
@@ -290,8 +407,7 @@ export class AgentLoop {
             payload.contents.push({ role: 'model', parts });
 
             if (functionCallParts.length === 0) {
-                callbacks.onFinalResponse(textParts.map((p: any) => p.text).join('') || '(Empty response)');
-                return;
+                return textParts.map((p: any) => p.text).join('') || '(Empty response)';
             }
 
             const responsePartsForGemini: any[] = [];
@@ -305,7 +421,7 @@ export class AgentLoop {
             }
             payload.contents.push({ role: 'user', parts: responsePartsForGemini });
         }
-        callbacks.onError(`Agent reached maximum iterations (${maxIter}).`);
+        throw new Error(`Agent reached maximum iterations (${maxIter}).`);
     }
 
     // ─── OpenAI-Compatible Loop (OpenAI, DeepSeek, Groq, OpenRouter, etc.) ────
@@ -316,7 +432,7 @@ export class AgentLoop {
         history: Array<{ role: 'user' | 'assistant'; content: string }>,
         maxIter: number, callbacks: AgentLoopCallbacks,
         providerId: string
-    ): Promise<void> {
+    ): Promise<string> {
         const base = baseUrl.replace(/\/+$/, '');
         const chatUrl = base.endsWith('/v1') ? `${base}/chat/completions` : `${base}/v1/chat/completions`;
 
@@ -348,23 +464,19 @@ export class AgentLoop {
                 max_tokens: 8192
             };
 
-            const data = await this.fetchJson(chatUrl, { method: 'POST', headers, body: JSON.stringify(payload) }, callbacks);
-            if (!data) return;
+            const data = await this.fetchJson(chatUrl, { method: 'POST', headers, body: JSON.stringify(payload) });
 
             const choice = data.choices?.[0];
             const assistantMsg = choice?.message;
             if (!assistantMsg) {
-                callbacks.onError('No message in response from provider.');
-                return;
+                throw new Error('No message in response from provider.');
             }
 
             messages.push(assistantMsg);
 
             const toolCalls: any[] = assistantMsg.tool_calls || [];
             if (toolCalls.length === 0) {
-                // Final answer
-                callbacks.onFinalResponse(assistantMsg.content || '(Empty response)');
-                return;
+                return assistantMsg.content || '(Empty response)';
             }
 
             // Execute tool calls
@@ -385,7 +497,7 @@ export class AgentLoop {
                 });
             }
         }
-        callbacks.onError(`Agent reached maximum iterations (${maxIter}).`);
+        throw new Error(`Agent reached maximum iterations (${maxIter}).`);
     }
 
     // ─── Anthropic Loop ─────────────────────────────────────────────────────────
@@ -395,7 +507,7 @@ export class AgentLoop {
         systemPrompt: string, prompt: string,
         history: Array<{ role: 'user' | 'assistant'; content: string }>,
         maxIter: number, callbacks: AgentLoopCallbacks
-    ): Promise<void> {
+    ): Promise<string> {
         const base = baseUrl.replace(/\/+$/, '');
         const messagesUrl = base.endsWith('/messages') ? base : `${base}/messages`;
 
@@ -406,7 +518,6 @@ export class AgentLoop {
             'User-Agent': 'Antigravity-Multi-AI-Hub/0.1.0'
         };
 
-        // Build Anthropic messages (no system role in messages array)
         const messages: any[] = [
             ...history.map(m => ({ role: m.role, content: m.content })),
             { role: 'user', content: prompt }
@@ -424,24 +535,20 @@ export class AgentLoop {
                 temperature: 0.1
             };
 
-            const data = await this.fetchJson(messagesUrl, { method: 'POST', headers, body: JSON.stringify(payload) }, callbacks);
-            if (!data) return;
+            const data = await this.fetchJson(messagesUrl, { method: 'POST', headers, body: JSON.stringify(payload) });
 
             const responseContent: any[] = data.content || [];
             const stopReason: string = data.stop_reason || 'end_turn';
 
-            // Add assistant turn to messages
             messages.push({ role: 'assistant', content: responseContent });
 
             const toolUseBlocks = responseContent.filter((c: any) => c.type === 'tool_use');
             const textBlocks = responseContent.filter((c: any) => c.type === 'text');
 
             if (toolUseBlocks.length === 0 || stopReason === 'end_turn') {
-                callbacks.onFinalResponse(textBlocks.map((t: any) => t.text).join('') || '(Empty response)');
-                return;
+                return textBlocks.map((t: any) => t.text).join('') || '(Empty response)';
             }
 
-            // Execute tool calls and collect results
             const toolResults: any[] = [];
             for (const toolUse of toolUseBlocks) {
                 const { id, name, input } = toolUse;
@@ -457,10 +564,9 @@ export class AgentLoop {
                 });
             }
 
-            // Add tool results as a user turn (Anthropic format)
             messages.push({ role: 'user', content: toolResults });
         }
-        callbacks.onError(`Agent reached maximum iterations (${maxIter}).`);
+        throw new Error(`Agent reached maximum iterations (${maxIter}).`);
     }
 
     // ─── ReAct Text-Based Fallback (Ollama and others) ───────────────────────
@@ -470,12 +576,10 @@ export class AgentLoop {
         systemPrompt: string, prompt: string,
         history: Array<{ role: 'user' | 'assistant'; content: string }>,
         maxIter: number, callbacks: AgentLoopCallbacks
-    ): Promise<void> {
-        // Use the existing adapter's sendChatCompletion with structured ReAct prompting
+    ): Promise<string> {
         const adapter = this.registry.getAdapter(providerConfig.id);
         if (!adapter) {
-            callbacks.onError(`No adapter found for provider "${providerConfig.id}".`);
-            return;
+            throw new Error(`No adapter found for provider "${providerConfig.id}".`);
         }
 
         const enhancedSystem = systemPrompt + buildReActSystemAddition();
@@ -486,7 +590,6 @@ export class AgentLoop {
         ];
 
         for (let i = 0; i < maxIter; i++) {
-            const { ChatCompletionRequest } = await import('../types/chat' as any);
             const request = {
                 requestId: `agent_${Date.now()}`,
                 providerId: providerConfig.id,
@@ -496,28 +599,18 @@ export class AgentLoop {
                 maxTokens: 4096
             };
 
-            let responseText = '';
-            try {
-                const resp = await adapter.sendChatCompletion(apiKey, request as any);
-                responseText = resp.content;
-            } catch (err: any) {
-                callbacks.onError(`Provider error: ${err?.message || err}`);
-                return;
-            }
+            const resp = await adapter.sendChatCompletion(apiKey, request as any);
+            const responseText = resp.content;
 
             conversationMessages.push({ role: 'assistant', content: responseText });
 
-            // Parse ReAct format: TOOL_CALL: <name>\nARGS: <json>
             const toolCallMatch = responseText.match(/TOOL_CALL:\s*(\w+)\s*\nARGS:\s*(\{[\s\S]*?\})/);
             if (!toolCallMatch) {
-                // No tool call — final response
-                // Strip any ReAct formatting artifacts from the final answer
                 const cleaned = responseText
                     .replace(/TOOL_CALL:.*$/gm, '')
                     .replace(/ARGS:.*$/gm, '')
                     .trim();
-                callbacks.onFinalResponse(cleaned || responseText);
-                return;
+                return cleaned || responseText;
             }
 
             const toolName = toolCallMatch[1];
@@ -529,18 +622,17 @@ export class AgentLoop {
             callbacks.onToolResult(result);
             if (result.pendingEdit) callbacks.onPendingEdit(result.pendingEdit);
 
-            // Feed tool result back as a user message
             conversationMessages.push({
                 role: 'user',
                 content: `TOOL_RESULT for ${toolName}:\n${result.output}`
             });
         }
-        callbacks.onError(`Agent reached maximum iterations (${maxIter}).`);
+        throw new Error(`Agent reached maximum iterations (${maxIter}).`);
     }
 
     // ─── Shared HTTP Helper ───────────────────────────────────────────────────
 
-    private async fetchJson(url: string, init: RequestInit, callbacks: AgentLoopCallbacks): Promise<any | null> {
+    private async fetchJson(url: string, init: RequestInit): Promise<any> {
         try {
             const response = await fetch(url, init);
             if (!response.ok) {
@@ -551,13 +643,20 @@ export class AgentLoop {
                     const errText = parsed?.error?.message || parsed?.message || parsed?.detail;
                     if (errText) userMsg = `Provider error: ${errText}`;
                 } catch { userMsg = `Provider error (HTTP ${response.status}): ${body.substring(0, 300)}`; }
-                callbacks.onError(userMsg);
-                return null;
+
+                const isSwitchable = isSwitchableError(response.status, userMsg);
+                const err: any = new Error(userMsg);
+                err.status = response.status;
+                err.isSwitchable = isSwitchable;
+                throw err;
             }
             return await response.json();
         } catch (err: any) {
-            callbacks.onError(`Network error: ${err?.message || err}`);
-            return null;
+            if (err?.isSwitchable !== undefined) throw err;
+            const netErr: any = new Error(`Network error: ${err?.message || err}`);
+            netErr.status = 0;
+            netErr.isSwitchable = true;
+            throw netErr;
         }
     }
 }

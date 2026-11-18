@@ -75,8 +75,15 @@ export class GeminiAdapter extends BaseProviderAdapter {
         const data = (await response.json()) as any;
         const rawModels: any[] = data.models || [];
 
-        return rawModels
-            .filter((m: any) => m.name && m.supportedGenerationMethods?.includes('generateContent'))
+        const discovered: ModelMetadata[] = rawModels
+            .filter((m: any) => {
+                if (!m.name || !m.supportedGenerationMethods?.includes('generateContent')) return false;
+                const id = m.name.replace(/^models\//, '').toLowerCase();
+                if (id.includes('embedding') || id.includes('aqa') || id.includes('imagen') || id.includes('bison') || id.includes('whisper')) {
+                    return false;
+                }
+                return true;
+            })
             .map((m: any) => {
                 const id = m.name.replace(/^models\//, '');
                 const maxTokens = m.inputTokenLimit || 1048576;
@@ -91,7 +98,7 @@ export class GeminiAdapter extends BaseProviderAdapter {
                         supportsVision: true,
                         supportsTools: true,
                         supportsJsonMode: true,
-                        supportsReasoningContent: id.includes('2.5') || id.includes('flash'),
+                        supportsReasoningContent: id.includes('3.8') || id.includes('2.5') || id.includes('flash') || id.includes('pro'),
                         maxContextTokens: maxTokens,
                         maxOutputTokens: outputTokens
                     },
@@ -100,6 +107,49 @@ export class GeminiAdapter extends BaseProviderAdapter {
                     description: m.description
                 };
             });
+
+        // Always guarantee Gemini 3.8 Flash and Gemini 3.8 Pro are present
+        if (!discovered.some(m => m.id === 'gemini-3.8-flash')) {
+            discovered.unshift({
+                id: 'gemini-3.8-flash',
+                displayName: 'Gemini 3.8 Flash',
+                providerId: this.providerId,
+                capabilities: {
+                    supportsStreaming: true,
+                    supportsVision: true,
+                    supportsTools: true,
+                    supportsJsonMode: true,
+                    supportsReasoningContent: true,
+                    maxContextTokens: 1048576,
+                    maxOutputTokens: 8192
+                },
+                isCustom: false,
+                isEnabled: true,
+                description: 'Google next-gen low-latency multimodal model with tool use'
+            });
+        }
+
+        if (!discovered.some(m => m.id === 'gemini-3.8-pro')) {
+            discovered.push({
+                id: 'gemini-3.8-pro',
+                displayName: 'Gemini 3.8 Pro',
+                providerId: this.providerId,
+                capabilities: {
+                    supportsStreaming: true,
+                    supportsVision: true,
+                    supportsTools: true,
+                    supportsJsonMode: true,
+                    supportsReasoningContent: true,
+                    maxContextTokens: 2097152,
+                    maxOutputTokens: 8192
+                },
+                isCustom: false,
+                isEnabled: true,
+                description: 'Google flagship reasoning model for complex coding and multi-turn workflows'
+            });
+        }
+
+        return discovered;
     }
 
     private formatGeminiPayload(request: ChatCompletionRequest): any {

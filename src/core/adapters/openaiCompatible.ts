@@ -135,26 +135,32 @@ export class OpenAICompatibleAdapter extends BaseProviderAdapter {
         const data = (await response.json()) as any;
         const rawModels: any[] = Array.isArray(data.data) ? data.data : Array.isArray(data.models) ? data.models : [];
 
-        return rawModels.map((m: any) => {
-            const id = typeof m === 'string' ? m : m.id || m.name;
-            return {
-                id,
-                displayName: id,
-                providerId: this.providerId,
-                capabilities: {
-                    supportsStreaming: true,
-                    supportsVision: false,
-                    supportsTools: true,
-                    supportsJsonMode: true,
-                    supportsReasoningContent: false,
-                    maxContextTokens: 128000,
-                    maxOutputTokens: 4096
-                },
-                isCustom: true,
-                isEnabled: true,
-                description: `Discovered from ${this.config.name}`
-            };
-        });
+        return rawModels
+            .filter((m: any) => {
+                const id = typeof m === 'string' ? m : m.id || m.name || '';
+                const l = id.toLowerCase();
+                return !l.includes('embed') && !l.includes('whisper') && !l.includes('tts') && !l.includes('dall-e') && !l.includes('moderation') && !l.includes('audio');
+            })
+            .map((m: any) => {
+                const id = typeof m === 'string' ? m : m.id || m.name;
+                return {
+                    id,
+                    displayName: id,
+                    providerId: this.providerId,
+                    capabilities: {
+                        supportsStreaming: true,
+                        supportsVision: false,
+                        supportsTools: true,
+                        supportsJsonMode: true,
+                        supportsReasoningContent: false,
+                        maxContextTokens: 128000,
+                        maxOutputTokens: 4096
+                    },
+                    isCustom: true,
+                    isEnabled: true,
+                    description: `Discovered from ${this.config.name}`
+                };
+            });
     }
 
     public async sendChatCompletion(
