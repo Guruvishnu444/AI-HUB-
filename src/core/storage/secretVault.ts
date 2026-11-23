@@ -2,7 +2,13 @@ import * as vscode from 'vscode';
 
 export function cleanApiKey(raw: string): string {
     if (!raw) return '';
-    let key = raw.trim();
+    let key = String(raw);
+    // Strip zero-width spaces, byte order marks, and non-printable control characters
+    key = key.replace(/[\u200B-\u200D\uFEFF]/g, '');
+    key = key.replace(/[\u0000-\u001F\u007F-\u009F]/g, '');
+    key = key.replace(/[\r\n\t]/g, '');
+    key = key.trim();
+
     // Only strip variable assignment prefix if it matches an env var pattern like API_KEY= or KEY =
     if (/^[A-Za-z0-9_-]{2,}\s*=\s*/.test(key)) {
         key = key.replace(/^[A-Za-z0-9_-]{2,}\s*=\s*/, '');
@@ -11,9 +17,11 @@ export function cleanApiKey(raw: string): string {
     if (key.toLowerCase().startsWith('bearer ')) {
         key = key.substring(7).trim();
     }
+    // Strip trailing semicolons or commas
+    key = key.replace(/[;,]+$/, '').trim();
     // Strip surrounding quotes
     key = key.replace(/^["'`]+|["'`]+$/g, '').trim();
-    // Strip trailing semicolons or commas
+    // Strip trailing semicolons or commas again if quotes were inside
     key = key.replace(/[;,]+$/, '').trim();
     return key;
 }

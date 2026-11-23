@@ -19,7 +19,9 @@
   "main": "./out/extension.js",
   "activationEvents": [
     "onView:antigravityHub.mainView",
-    "onCommand:antigravityHub.openPanel"
+    "onCommand:antigravityHub.openPanel",
+    "onCommand:antigravityHub.checkHealth",
+    "onCommand:antigravityHub.pickWorkspace"
   ],
   "contributes": {
     "viewsContainers": {
@@ -50,6 +52,11 @@
         "command": "antigravityHub.checkHealth",
         "title": "Antigravity Multi-AI Hub: Self-Diagnostic Health Check",
         "category": "Multi-AI Hub"
+      },
+      {
+        "command": "antigravityHub.pickWorkspace",
+        "title": "Antigravity Multi-AI Hub: Select Project Workspace Folder",
+        "category": "Multi-AI Hub"
       }
     ]
   },
@@ -57,6 +64,7 @@
     "vscode:prepublish": "node ./scripts/build.js",
     "compile": "node ./scripts/build.js",
     "watch": "node ./scripts/build.js --watch",
+    "typecheck": "tsc --noEmit",
     "test": "node ./scripts/test_all.js",
     "build:vsix": "npx @vscode/vsce package --no-dependencies"
   },

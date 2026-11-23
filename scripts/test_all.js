@@ -75,6 +75,36 @@ runTest('Completely redact API keys from error messages', () => {
     assert.strictEqual(sanitized.includes('[REDACTED_API_KEY]'), true);
 });
 
+function cleanApiKey(raw) {
+    if (!raw) return '';
+    let key = String(raw);
+    key = key.replace(/[\u200B-\u200D\uFEFF]/g, '');
+    key = key.replace(/[\u0000-\u001F\u007F-\u009F]/g, '');
+    key = key.replace(/[\r\n\t]/g, '');
+    key = key.trim();
+    if (/^[A-Za-z0-9_-]{2,}\s*=\s*/.test(key)) {
+        key = key.replace(/^[A-Za-z0-9_-]{2,}\s*=\s*/, '');
+    }
+    if (key.toLowerCase().startsWith('bearer ')) {
+        key = key.substring(7).trim();
+    }
+    // Strip trailing semicolons or commas
+    key = key.replace(/[;,]+$/, '').trim();
+    // Strip surrounding quotes
+    key = key.replace(/^["'`]+|["'`]+$/g, '').trim();
+    // Strip trailing semicolons or commas again if quotes were inside
+    key = key.replace(/[;,]+$/, '').trim();
+    return key;
+}
+
+runTest('Clean API key: strip quotes, zero-width chars, newlines, and env var prefixes', () => {
+    assert.strictEqual(cleanApiKey('  sk-test12345  '), 'sk-test12345');
+    assert.strictEqual(cleanApiKey('"sk-test12345"'), 'sk-test12345');
+    assert.strictEqual(cleanApiKey('GEMINI_API_KEY = "AIzaSyKey123";'), 'AIzaSyKey123');
+    assert.strictEqual(cleanApiKey('Bearer sk-bearer-key-999'), 'sk-bearer-key-999');
+    assert.strictEqual(cleanApiKey('\uFEFFsk-key-with-bom\r\n\t'), 'sk-key-with-bom');
+});
+
 // -----------------------------------------------------------------------------
 // 3. QUOTA EXHAUSTION & RESILIENT FALLBACK DETECTION
 // -----------------------------------------------------------------------------
