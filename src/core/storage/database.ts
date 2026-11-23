@@ -325,6 +325,7 @@ export class HubDatabase {
                         m.id.includes('imagen') ||
                         m.id.includes('whisper') ||
                         m.id.includes('bison') ||
+                        m.id.includes('vision') ||
                         (m.providerId === 'google-gemini' && m.id.includes('gemma'))
                     );
 

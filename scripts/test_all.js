@@ -134,8 +134,59 @@ function isSwitchableError(status, message) {
            lower.includes('capacity') ||
            lower.includes('insufficient_quota') ||
            lower.includes('billing') ||
-           lower.includes('credit');
+           lower.includes('credit') ||
+           lower.includes('multiturn') ||
+           lower.includes('multi-turn') ||
+           lower.includes('not enabled for this model');
 }
+
+function buildGeminiContents(history, currentPrompt) {
+    const raw = [];
+    for (const msg of history) {
+        if (!msg.content || typeof msg.content !== 'string' || !msg.content.trim()) continue;
+        const role = msg.role === 'assistant' ? 'model' : 'user';
+        raw.push({ role, text: msg.content.trim() });
+    }
+    if (currentPrompt && currentPrompt.trim()) {
+        raw.push({ role: 'user', text: currentPrompt.trim() });
+    }
+    while (raw.length > 0 && raw[0].role !== 'user') {
+        raw.shift();
+    }
+    const alternating = [];
+    for (const item of raw) {
+        if (alternating.length === 0) {
+            alternating.push({ role: item.role, parts: [{ text: item.text }] });
+        } else {
+            const prev = alternating[alternating.length - 1];
+            if (prev.role === item.role) {
+                prev.parts.push({ text: item.text });
+            } else {
+                alternating.push({ role: item.role, parts: [{ text: item.text }] });
+            }
+        }
+    }
+    if (alternating.length === 0) {
+        alternating.push({ role: 'user', parts: [{ text: currentPrompt || 'Hello' }] });
+    }
+    return alternating;
+}
+
+runTest('Detect Multiturn chat is not enabled for this model as switchable', () => {
+    const multiturnError = 'Multiturn chat is not enabled for this model';
+    assert.strictEqual(isSwitchableError(400, multiturnError), true);
+});
+
+runTest('Sanitize and alternate Gemini turns (prevent consecutive user turns)', () => {
+    const brokenHistory = [
+        { role: 'user', content: 'First prompt that failed' },
+        { role: 'user', content: 'Second prompt with no model reply' }
+    ];
+    const contents = buildGeminiContents(brokenHistory, 'Third prompt');
+    assert.strictEqual(contents.length, 1);
+    assert.strictEqual(contents[0].role, 'user');
+    assert.strictEqual(contents[0].parts.length, 3);
+});
 
 runTest('Detect Google Gemini free-tier 20 req/day quota limit', () => {
     const geminiError = 'Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3.8-flash, description: Generate content requests per day limit exceeded on Free Tier.';

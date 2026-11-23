@@ -206,7 +206,7 @@ export interface AgentLoopCallbacks {
 
 function isUsableChatModel(id: string, providerId: string): boolean {
     const lower = id.toLowerCase();
-    if (lower.includes('embedding') || lower.includes('aqa') || lower.includes('imagen') || lower.includes('bison') || lower.includes('whisper') || lower.includes('tts') || lower.includes('moderation') || lower.includes('dall-e')) {
+    if (lower.includes('embedding') || lower.includes('aqa') || lower.includes('imagen') || lower.includes('bison') || lower.includes('whisper') || lower.includes('tts') || lower.includes('moderation') || lower.includes('dall-e') || lower.includes('vision')) {
         return false;
     }
     if (providerId === 'google-gemini' && lower.includes('gemma')) {
@@ -230,9 +230,56 @@ function isSwitchableError(status: number, message: string): boolean {
            lower.includes('insufficient_quota') ||
            lower.includes('billing') ||
            lower.includes('credit') ||
+           lower.includes('multiturn') ||
+           lower.includes('multi-turn') ||
+           lower.includes('not enabled for this model') ||
            lower.includes('fetch failed') ||
            lower.includes('connection refused') ||
            lower.includes('enotfound');
+}
+
+/**
+ * Builds valid Gemini conversation contents:
+ * 1. Filters out empty messages
+ * 2. Ensures the conversation starts with a 'user' turn
+ * 3. Merges consecutive turns of the same role (Gemini strictly requires alternating user -> model -> user)
+ */
+export function buildGeminiContents(history: Array<{ role: 'user' | 'assistant'; content: string }>, currentPrompt: string): any[] {
+    const raw: Array<{ role: 'user' | 'model'; text: string }> = [];
+
+    for (const msg of history) {
+        if (!msg.content || typeof msg.content !== 'string' || !msg.content.trim()) continue;
+        const role = msg.role === 'assistant' ? 'model' : 'user';
+        raw.push({ role, text: msg.content.trim() });
+    }
+
+    if (currentPrompt && currentPrompt.trim()) {
+        raw.push({ role: 'user', text: currentPrompt.trim() });
+    }
+
+    while (raw.length > 0 && raw[0].role !== 'user') {
+        raw.shift();
+    }
+
+    const alternating: any[] = [];
+    for (const item of raw) {
+        if (alternating.length === 0) {
+            alternating.push({ role: item.role, parts: [{ text: item.text }] });
+        } else {
+            const prev = alternating[alternating.length - 1];
+            if (prev.role === item.role) {
+                prev.parts.push({ text: item.text });
+            } else {
+                alternating.push({ role: item.role, parts: [{ text: item.text }] });
+            }
+        }
+    }
+
+    if (alternating.length === 0) {
+        alternating.push({ role: 'user', parts: [{ text: currentPrompt || 'Hello' }] });
+    }
+
+    return alternating;
 }
 
 // ─── AgentLoop ────────────────────────────────────────────────────────────────
@@ -384,10 +431,7 @@ export class AgentLoop {
         const cleanModel = modelId.replace(/^models\//, '');
         const url = `${baseUrl.replace(/\/+$/, '')}/models/${cleanModel}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
-        const contents: any[] = [
-            ...history.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] })),
-            { role: 'user', parts: [{ text: prompt }] }
-        ];
+        const contents = buildGeminiContents(history, prompt);
 
         const payload: any = {
             systemInstruction: { parts: [{ text: systemPrompt }] },

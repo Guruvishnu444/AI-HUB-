@@ -79,7 +79,7 @@ export class GeminiAdapter extends BaseProviderAdapter {
             .filter((m: any) => {
                 if (!m.name || !m.supportedGenerationMethods?.includes('generateContent')) return false;
                 const id = m.name.replace(/^models\//, '').toLowerCase();
-                if (id.includes('embedding') || id.includes('aqa') || id.includes('imagen') || id.includes('bison') || id.includes('whisper')) {
+                if (id.includes('embedding') || id.includes('aqa') || id.includes('imagen') || id.includes('bison') || id.includes('whisper') || id.includes('vision')) {
                     return false;
                 }
                 return true;
@@ -154,7 +154,7 @@ export class GeminiAdapter extends BaseProviderAdapter {
 
     private formatGeminiPayload(request: ChatCompletionRequest): any {
         let systemText = '';
-        const contents: any[] = [];
+        const rawTurns: Array<{ role: 'user' | 'model'; parts: any[] }> = [];
 
         for (const msg of request.messages) {
             if (msg.role === 'system') {
@@ -163,7 +163,10 @@ export class GeminiAdapter extends BaseProviderAdapter {
             }
 
             const role = msg.role === 'assistant' ? 'model' : 'user';
-            const parts: any[] = [{ text: msg.content }];
+            const parts: any[] = [];
+            if (msg.content) {
+                parts.push({ text: msg.content });
+            }
 
             if (msg.attachments && msg.attachments.length > 0) {
                 for (const att of msg.attachments) {
@@ -176,7 +179,33 @@ export class GeminiAdapter extends BaseProviderAdapter {
                 }
             }
 
-            contents.push({ role, parts });
+            if (parts.length > 0) {
+                rawTurns.push({ role, parts });
+            }
+        }
+
+        // Ensure the conversation starts with a user turn
+        while (rawTurns.length > 0 && rawTurns[0].role !== 'user') {
+            rawTurns.shift();
+        }
+
+        // Merge consecutive turns with the same role to strictly alternate user -> model -> user
+        const contents: any[] = [];
+        for (const turn of rawTurns) {
+            if (contents.length === 0) {
+                contents.push(turn);
+            } else {
+                const prev = contents[contents.length - 1];
+                if (prev.role === turn.role) {
+                    prev.parts.push(...turn.parts);
+                } else {
+                    contents.push(turn);
+                }
+            }
+        }
+
+        if (contents.length === 0) {
+            contents.push({ role: 'user', parts: [{ text: 'Hello' }] });
         }
 
         const payload: any = { contents };
