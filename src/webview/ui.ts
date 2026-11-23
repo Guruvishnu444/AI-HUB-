@@ -351,7 +351,22 @@ export function getWebviewHtml(): string {
                     <select id="model-selector" onchange="onModelChange()"></select>
                 </div>
                 <div id="model-badges" style="display:flex; gap:6px; align-items:center; margin-top:14px;"></div>
-                <button class="secondary" style="margin-top:14px;" onclick="clearChat()">Clear History</button>
+                <div style="display:flex; gap:6px; align-items:center; margin-top:14px; flex-wrap:wrap;">
+                    <span id="active-folder-chat-badge" class="badge badge-gray" style="font-size:10.5px; padding:3px 8px; font-weight:600;">Folder: Global</span>
+                    <button class="secondary" onclick="toggleFolderChatsModal()">Folder Chats</button>
+                    <button class="secondary" onclick="clearChat()">Clear History</button>
+                </div>
+            </div>
+
+            <!-- Saved Folder Chats Drawer -->
+            <div id="folder-chats-drawer" style="display:none; margin-bottom:12px; padding:10px 12px; background:rgba(255,255,255,0.03); border:1px solid var(--border); border-radius:4px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                    <span style="font-size:12px; font-weight:600; opacity:0.9;">Saved Project Folder Chats</span>
+                    <button class="secondary" style="font-size:10px; padding:2px 6px;" onclick="toggleFolderChatsModal()">Close</button>
+                </div>
+                <div id="folder-chats-list" style="max-height:180px; overflow-y:auto; display:flex; flex-direction:column; gap:6px;">
+                    <p style="font-size:11px; opacity:0.6;">Loading saved chats...</p>
+                </div>
             </div>
 
             <!-- Fallback Status Alert -->
@@ -655,7 +670,10 @@ export function getWebviewHtml(): string {
             agentMode: true,           // true = file and code tools enabled by default
             agentDebugMode: false,     // true = inject debugger system prompt
             agentThinkingSteps: [],    // accumulated tool call steps for current agent run
-            pendingAgentEdits: {}      // editId -> { filePath, originalContent, proposedContent, description }
+            pendingAgentEdits: {},     // editId -> { filePath, originalContent, proposedContent, description }
+            currentFolderChatName: 'Global',
+            savedFolderChats: [],
+            isFolderChatsOpen: false
         };
 
         const expandedProviders = new Set(['google-gemini']);
@@ -709,6 +727,12 @@ export function getWebviewHtml(): string {
                     state.totalRequests = msg.totalRequests || 0;
                     state.auditLogs = msg.auditLogs || [];
                     state.workspaceRoot = msg.workspaceRoot || null;
+                    state.currentFolderChatName = msg.currentFolderChatName || (state.workspaceRoot ? state.workspaceRoot.split(/[/\\]/).pop() : 'Global');
+
+                    const folderBadge = document.getElementById('active-folder-chat-badge');
+                    if (folderBadge) {
+                        folderBadge.textContent = 'Folder: ' + state.currentFolderChatName;
+                    }
 
                     const wsDisp = document.getElementById('ws-root-display');
                     const wsBadge = document.getElementById('ws-status-badge');
@@ -740,6 +764,11 @@ export function getWebviewHtml(): string {
                         state.messages.push(msg.message);
                         renderMessages();
                     }
+                    break;
+
+                case 'FOLDER_CHATS_LIST':
+                    state.savedFolderChats = msg.chats || [];
+                    renderSavedFolderChats(msg.currentWorkspacePath);
                     break;
 
                 case 'CONNECTION_TEST_RESULT':
@@ -1509,6 +1538,60 @@ export function getWebviewHtml(): string {
             state.messages = [];
             renderMessages();
             vscode.postMessage({ type: 'CLEAR_HISTORY' });
+        }
+
+        function toggleFolderChatsModal() {
+            const drawer = document.getElementById('folder-chats-drawer');
+            if (!drawer) return;
+            state.isFolderChatsOpen = !state.isFolderChatsOpen;
+            drawer.style.display = state.isFolderChatsOpen ? 'block' : 'none';
+            if (state.isFolderChatsOpen) {
+                vscode.postMessage({ type: 'LIST_FOLDER_CHATS' });
+            }
+        }
+
+        function loadFolderChat(workspacePath) {
+            vscode.postMessage({ type: 'LOAD_FOLDER_CHAT', workspacePath });
+            toggleFolderChatsModal();
+        }
+
+        function deleteFolderChat(workspacePath) {
+            if (confirm('Delete chat history for this folder?')) {
+                vscode.postMessage({ type: 'DELETE_FOLDER_CHAT', workspacePath });
+            }
+        }
+
+        function renderSavedFolderChats(currentWorkspacePath) {
+            const container = document.getElementById('folder-chats-list');
+            if (!container) return;
+            if (!state.savedFolderChats || state.savedFolderChats.length === 0) {
+                container.innerHTML = '<p style="font-size:11px; opacity:0.6; padding:6px 0;">No saved folder chats yet. Chat histories are automatically saved for each project folder you open.</p>';
+                return;
+            }
+
+            container.innerHTML = state.savedFolderChats.map(c => {
+                const isActive = (c.workspacePath === 'global' && !currentWorkspacePath) || (c.workspacePath === currentWorkspacePath);
+                const timeStr = c.lastUpdated ? new Date(c.lastUpdated).toLocaleString() : '';
+                const borderStyle = isActive ? 'var(--vscode-focusBorder, #007acc)' : 'rgba(255,255,255,0.06)';
+                return [
+                    '<div style="display:flex; justify-content:space-between; align-items:center; padding:6px 10px; background:rgba(255,255,255,0.02); border:1px solid ' + borderStyle + '; border-radius:4px; gap:8px;">',
+                    '  <div style="flex:1; min-width:0;">',
+                    '    <div style="font-size:12px; font-weight:600; display:flex; align-items:center; gap:6px;">',
+                    '      <span>' + escapeHtml(c.folderName) + '</span>',
+                    isActive ? '      <span class="badge badge-green" style="font-size:9px; padding:1px 5px;">CURRENT ACTIVE</span>' : '',
+                    '      <span class="badge badge-gray" style="font-size:9px; padding:1px 5px;">' + c.messageCount + ' msgs</span>',
+                    '    </div>',
+                    '    <div style="font-size:10px; opacity:0.6; font-family:monospace; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">' + escapeHtml(c.workspacePath) + '</div>',
+                    '    <div style="font-size:10.5px; opacity:0.75; margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">' + escapeHtml(c.preview || 'No messages') + '</div>',
+                    '    <div style="font-size:9.5px; opacity:0.5; margin-top:2px;">Last active: ' + timeStr + '</div>',
+                    '  </div>',
+                    '  <div style="display:flex; gap:6px; align-items:center; flex-shrink:0;">',
+                    !isActive ? '    <button class="primary" style="font-size:10px; padding:2px 8px;" onclick="loadFolderChat(\'' + escapeHtml(c.workspacePath) + '\')">Open Chat</button>' : '',
+                    '    <button class="danger" style="font-size:10px; padding:2px 8px;" onclick="deleteFolderChat(\'' + escapeHtml(c.workspacePath) + '\')">Delete</button>',
+                    '  </div>',
+                    '</div>'
+                ].join('');
+            }).join('');
         }
 
         function saveKey(providerId) {

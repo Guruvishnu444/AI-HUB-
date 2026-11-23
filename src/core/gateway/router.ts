@@ -1,11 +1,12 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { SecretVault } from '../storage/secretVault';
 import { HubDatabase } from '../storage/database';
 import { AdapterRegistry } from '../adapters/registry';
 import { FallbackEngine } from '../fallback/engine';
 import { OpenAICompatibleAdapter } from '../adapters/openaiCompatible';
 import { AnthropicAdapter } from '../adapters/anthropic';
-import { WebviewToHostMessage, HostToWebviewMessage, ProviderSummary } from '../types/ipc';
+import { WebviewToHostMessage, HostToWebviewMessage, ProviderSummary, FolderChatSummary } from '../types/ipc';
 import { ChatMessage, ChatCompletionRequest } from '../types/chat';
 import { HubError } from '../types/errors';
 import { WorkspaceGuardrails } from '../../workspace/guardrails';
@@ -23,6 +24,8 @@ export class GatewayRouter {
     private diffEngine?: DiffEngine;
     private agentLoop?: AgentLoop;
     private messages: ChatMessage[] = [];
+    private currentChatWorkspacePath: string | null = null;
+    private messagesLoaded = false;
     private activeProviderId = 'google-gemini';
     private activeModelId = 'gemini-3.8-flash';
     private activeAbortControllers: Map<string, AbortController> = new Map();
@@ -54,12 +57,39 @@ export class GatewayRouter {
         }
     }
 
+    public async ensureMessagesLoaded(): Promise<void> {
+        if (!this.messagesLoaded) {
+            const wsRoot = this.currentChatWorkspacePath || this.guardrails?.getWorkspaceRoot() || null;
+            this.currentChatWorkspacePath = wsRoot;
+            this.messages = await this.db.loadFolderChat(wsRoot);
+            this.messagesLoaded = true;
+        }
+    }
+
+    public async saveCurrentChat(): Promise<void> {
+        const wsRoot = this.currentChatWorkspacePath || this.guardrails?.getWorkspaceRoot() || null;
+        await this.db.saveFolderChat(wsRoot, this.messages);
+    }
+
+    public async handleWorkspaceRootChanged(newWsRoot: string | null, postMessage?: (out: HostToWebviewMessage) => void): Promise<void> {
+        if (this.messagesLoaded) {
+            await this.saveCurrentChat();
+        }
+        this.currentChatWorkspacePath = newWsRoot;
+        this.messages = await this.db.loadFolderChat(newWsRoot);
+        this.messagesLoaded = true;
+        if (postMessage) {
+            await this.syncState(postMessage);
+        }
+    }
+
     public async handleWebviewMessage(
         msg: WebviewToHostMessage,
         postMessage: (out: HostToWebviewMessage) => void
     ): Promise<void> {
         switch (msg.type) {
             case 'INIT_STATE': {
+                await this.ensureMessagesLoaded();
                 await this.syncState(postMessage);
                 break;
             }
@@ -260,7 +290,39 @@ export class GatewayRouter {
 
             case 'CLEAR_HISTORY': {
                 this.messages = [];
+                await this.saveCurrentChat();
                 await this.syncState(postMessage);
+                break;
+            }
+
+            case 'LIST_FOLDER_CHATS': {
+                const chats = await this.db.listFolderChats();
+                const activePath = this.currentChatWorkspacePath || this.guardrails?.getWorkspaceRoot() || null;
+                postMessage({ type: 'FOLDER_CHATS_LIST', chats, currentWorkspacePath: activePath });
+                break;
+            }
+
+            case 'LOAD_FOLDER_CHAT': {
+                await this.saveCurrentChat();
+                this.currentChatWorkspacePath = msg.workspacePath === 'global' ? null : msg.workspacePath;
+                this.messages = await this.db.loadFolderChat(this.currentChatWorkspacePath);
+                this.messagesLoaded = true;
+                await this.syncState(postMessage);
+                const folderName = this.currentChatWorkspacePath ? path.basename(this.currentChatWorkspacePath) : 'Global / Scratchpad';
+                postMessage({ type: 'SHOW_NOTIFICATION', message: `Loaded chat history for "${folderName}" (${this.messages.length} messages).`, severity: 'info' });
+                break;
+            }
+
+            case 'DELETE_FOLDER_CHAT': {
+                await this.db.deleteFolderChat(msg.workspacePath === 'global' ? null : msg.workspacePath);
+                const activePath = this.currentChatWorkspacePath || this.guardrails?.getWorkspaceRoot() || null;
+                if ((msg.workspacePath === 'global' && !activePath) || msg.workspacePath === activePath) {
+                    this.messages = [];
+                    await this.syncState(postMessage);
+                }
+                const chats = await this.db.listFolderChats();
+                postMessage({ type: 'FOLDER_CHATS_LIST', chats, currentWorkspacePath: activePath });
+                postMessage({ type: 'SHOW_NOTIFICATION', message: 'Folder chat history deleted.', severity: 'info' });
                 break;
             }
 
@@ -481,6 +543,7 @@ export class GatewayRouter {
             timestamp: Date.now()
         };
         this.messages.push(userMsg);
+        await this.saveCurrentChat();
         postMessage({ type: 'USER_MESSAGE_COMMITTED', message: userMsg });
 
         // Build conversation history (without the current prompt, it's passed separately)
@@ -526,7 +589,7 @@ export class GatewayRouter {
                         description: edit.description
                     });
                 },
-                onFinalResponse: (text, resolvedProviderId, resolvedModelId) => {
+                onFinalResponse: async (text, resolvedProviderId, resolvedModelId) => {
                     finalContent = text;
                     const finalProviderId = resolvedProviderId || msg.providerId;
                     const finalModelId = resolvedModelId || msg.modelId;
@@ -539,6 +602,7 @@ export class GatewayRouter {
                         timestamp: Date.now()
                     };
                     this.messages.push(assistantMsg);
+                    await this.saveCurrentChat();
                     postMessage({ type: 'AGENT_RESPONSE', requestId, message: assistantMsg });
                     this.db.logAudit('REQUEST', finalProviderId, `Agent response (${msg.isDebugMode ? 'debug' : 'assistant'} mode, ${thinkingSteps.length} tool calls)`, finalModelId);
                     if (finalProviderId !== msg.providerId || finalModelId !== msg.modelId) {
@@ -575,6 +639,7 @@ export class GatewayRouter {
             timestamp: Date.now()
         };
         this.messages.push(userMsg);
+        await this.saveCurrentChat();
 
         // Notify Webview immediately so user message is rendered at once
         postMessage({
@@ -623,6 +688,7 @@ export class GatewayRouter {
             };
 
             this.messages.push(assistantMsg);
+            await this.saveCurrentChat();
 
             // Record usage
             const usage = execution.response?.usage || {
@@ -673,6 +739,7 @@ export class GatewayRouter {
     }
 
     private async syncState(postMessage: (out: HostToWebviewMessage) => void): Promise<void> {
+        await this.ensureMessagesLoaded();
         const providers = this.db.getProviders();
         const models = this.db.getModels();
         const fallbackConfig = this.db.getFallbackConfig();
@@ -692,6 +759,9 @@ export class GatewayRouter {
             });
         }
 
+        const wsRoot = this.currentChatWorkspacePath || this.guardrails?.getWorkspaceRoot() || null;
+        const currentFolderChatName = wsRoot ? path.basename(wsRoot) : 'Global / Scratchpad';
+
         postMessage({
             type: 'SYNC_STATE',
             providers: summaries,
@@ -703,7 +773,8 @@ export class GatewayRouter {
             totalTokens: this.db.getTotalTokens(),
             totalRequests: this.db.getTotalRequests(),
             auditLogs: this.db.getAuditLogs().slice(-50).reverse(),
-            workspaceRoot: this.guardrails?.getWorkspaceRoot() ?? null
+            workspaceRoot: wsRoot,
+            currentFolderChatName
         });
     }
 }

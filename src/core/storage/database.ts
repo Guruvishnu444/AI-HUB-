@@ -1,7 +1,9 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { ProviderConfig } from '../types/provider';
 import { ModelMetadata } from '../types/model';
-import { FallbackConfig, ModelUsageSummary } from '../types/ipc';
+import { FallbackConfig, ModelUsageSummary, FolderChatSummary } from '../types/ipc';
+import { ChatMessage } from '../types/chat';
 
 export interface UsageMetric {
     id: string;
@@ -570,5 +572,104 @@ export class HubDatabase {
 
     public getAuditLogs(): AuditLogEntry[] {
         return [...this.auditLogs];
+    }
+
+    // ─── Folder-Specific Chat History Persistence ────────────────────────────
+
+    private getChatsDirectoryUri(): vscode.Uri {
+        return vscode.Uri.joinPath(this.storageUri, 'folder_chats');
+    }
+
+    public getFolderChatFileName(workspacePath: string | null): string {
+        if (!workspacePath) return 'chat_global.json';
+        const cleanPath = workspacePath.replace(/[\\/]+$/, '');
+        const normalized = cleanPath.replace(/\\/g, '/').toLowerCase().trim();
+        let hash = 0;
+        for (let i = 0; i < normalized.length; i++) {
+            hash = ((hash << 5) - hash) + normalized.charCodeAt(i);
+            hash |= 0;
+        }
+        const hexHash = Math.abs(hash).toString(16);
+        const folderName = path.basename(normalized).replace(/[^a-zA-Z0-9_-]/g, '_') || 'folder';
+        return `chat_${folderName}_${hexHash}.json`;
+    }
+
+    public async saveFolderChat(workspacePath: string | null, messages: ChatMessage[]): Promise<void> {
+        try {
+            const dirUri = this.getChatsDirectoryUri();
+            try {
+                await vscode.workspace.fs.createDirectory(dirUri);
+            } catch {}
+
+            const fileName = this.getFolderChatFileName(workspacePath);
+            const fileUri = vscode.Uri.joinPath(dirUri, fileName);
+
+            const folderName = workspacePath ? path.basename(workspacePath) : 'Global / Scratchpad';
+            const data = {
+                workspacePath: workspacePath || 'global',
+                folderName,
+                lastUpdated: Date.now(),
+                messageCount: messages.length,
+                messages
+            };
+
+            const bytes = new TextEncoder().encode(JSON.stringify(data, null, 2));
+            await vscode.workspace.fs.writeFile(fileUri, bytes);
+        } catch (err) {
+            console.error('Failed to save folder chat:', err);
+        }
+    }
+
+    public async loadFolderChat(workspacePath: string | null): Promise<ChatMessage[]> {
+        try {
+            const dirUri = this.getChatsDirectoryUri();
+            const fileName = this.getFolderChatFileName(workspacePath);
+            const fileUri = vscode.Uri.joinPath(dirUri, fileName);
+
+            const bytes = await vscode.workspace.fs.readFile(fileUri);
+            const text = new TextDecoder().decode(bytes);
+            const parsed = JSON.parse(text);
+            return Array.isArray(parsed.messages) ? parsed.messages : [];
+        } catch {
+            return [];
+        }
+    }
+
+    public async listFolderChats(): Promise<FolderChatSummary[]> {
+        const summaries: FolderChatSummary[] = [];
+        try {
+            const dirUri = this.getChatsDirectoryUri();
+            const entries = await vscode.workspace.fs.readDirectory(dirUri);
+            for (const [name, type] of entries) {
+                if (type === vscode.FileType.File && name.endsWith('.json')) {
+                    try {
+                        const fileUri = vscode.Uri.joinPath(dirUri, name);
+                        const bytes = await vscode.workspace.fs.readFile(fileUri);
+                        const data = JSON.parse(new TextDecoder().decode(bytes));
+                        if (data && Array.isArray(data.messages)) {
+                            const lastMsg = data.messages[data.messages.length - 1];
+                            const preview = lastMsg?.content ? lastMsg.content.substring(0, 100) : 'No messages';
+                            summaries.push({
+                                workspacePath: data.workspacePath || 'global',
+                                folderName: data.folderName || 'Folder',
+                                lastUpdated: data.lastUpdated || 0,
+                                messageCount: data.messages.length,
+                                preview
+                            });
+                        }
+                    } catch {}
+                }
+            }
+        } catch {}
+        return summaries.sort((a, b) => b.lastUpdated - a.lastUpdated);
+    }
+
+    public async deleteFolderChat(workspacePath: string | null): Promise<void> {
+        try {
+            const dirUri = this.getChatsDirectoryUri();
+            const fileName = this.getFolderChatFileName(workspacePath);
+            const fileUri = vscode.Uri.joinPath(dirUri, fileName);
+            await vscode.workspace.fs.delete(fileUri);
+        } catch {}
     }
 }

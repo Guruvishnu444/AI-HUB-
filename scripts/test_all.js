@@ -310,6 +310,64 @@ runTest('File edits are never auto-saved; require explicit user approval', () =>
 });
 
 // -----------------------------------------------------------------------------
+// 6. FOLDER-SPECIFIC CHAT HISTORY PERSISTENCE & ISOLATION
+// -----------------------------------------------------------------------------
+console.log('\n--- 6. Folder-Specific Chat History Persistence & Isolation ---');
+
+function getFolderChatFileName(workspacePath) {
+    if (!workspacePath) return 'chat_global.json';
+    const cleanPath = workspacePath.replace(/[\\/]+$/, '');
+    const normalized = cleanPath.replace(/\\/g, '/').toLowerCase().trim();
+    let hash = 0;
+    for (let i = 0; i < normalized.length; i++) {
+        hash = ((hash << 5) - hash) + normalized.charCodeAt(i);
+        hash |= 0;
+    }
+    const hexHash = Math.abs(hash).toString(16);
+    const folderName = path.basename(normalized).replace(/[^a-zA-Z0-9_-]/g, '_') || 'folder';
+    return `chat_${folderName}_${hexHash}.json`;
+}
+
+runTest('Deterministic & isolated file keys for different workspace folders', () => {
+    const fileA = getFolderChatFileName('D:/vishnu/website/Antigravity AI HUB');
+    const fileB = getFolderChatFileName('D:/vishnu/website/Portfolio');
+    const fileGlobal = getFolderChatFileName(null);
+
+    assert.notStrictEqual(fileA, fileB, 'Folder A and Folder B must have distinct storage keys');
+    assert.strictEqual(fileGlobal, 'chat_global.json', 'Null workspace must resolve to global chat file');
+
+    // Case-insensitivity & slash normalization check
+    const fileA_Win = getFolderChatFileName('d:\\vishnu\\website\\antigravity ai hub\\');
+    assert.strictEqual(fileA, fileA_Win, 'Windows and POSIX representations of the same folder must resolve to the same file');
+});
+
+runTest('Folder chat state separation (Folder A does not leak into Folder B)', () => {
+    const mockStorage = new Map();
+
+    function saveChat(folder, msgs) {
+        mockStorage.set(getFolderChatFileName(folder), JSON.stringify(msgs));
+    }
+
+    function loadChat(folder) {
+        const raw = mockStorage.get(getFolderChatFileName(folder));
+        return raw ? JSON.parse(raw) : [];
+    }
+
+    // Save chat to Folder A
+    saveChat('D:/projects/ProjectA', [{ role: 'user', content: 'Hello in Project A' }]);
+    // Save chat to Folder B
+    saveChat('D:/projects/ProjectB', [{ role: 'user', content: 'Hello in Project B' }, { role: 'assistant', content: 'Reply in B' }]);
+
+    const chatA = loadChat('D:/projects/ProjectA');
+    const chatB = loadChat('D:/projects/ProjectB');
+
+    assert.strictEqual(chatA.length, 1);
+    assert.strictEqual(chatA[0].content, 'Hello in Project A');
+    assert.strictEqual(chatB.length, 2);
+    assert.strictEqual(chatB[1].content, 'Reply in B');
+});
+
+// -----------------------------------------------------------------------------
 // SUMMARY
 // -----------------------------------------------------------------------------
 console.log('\n================================================================');

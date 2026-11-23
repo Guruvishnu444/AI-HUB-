@@ -36,19 +36,21 @@ export async function activate(context: vscode.ExtensionContext) {
         outputChannel.appendLine(`[Multi-AI Hub] Workspace root set to: ${workspaceFolders[0].uri.fsPath}`);
     }
 
+    // 4. Initialize Gateway Router (now with workspace subsystem)
+    const router = new GatewayRouter(vault, db, registry, guardrails, fileTree, diffEngine);
+
     // Watch for workspace folder changes
     context.subscriptions.push(
-        vscode.workspace.onDidChangeWorkspaceFolders(e => {
+        vscode.workspace.onDidChangeWorkspaceFolders(async e => {
             const folders = vscode.workspace.workspaceFolders;
             if (folders && folders.length > 0) {
-                guardrails.setWorkspaceRoot(folders[0].uri.fsPath);
-                outputChannel.appendLine(`[Multi-AI Hub] Workspace root updated to: ${folders[0].uri.fsPath}`);
+                const newPath = folders[0].uri.fsPath;
+                guardrails.setWorkspaceRoot(newPath);
+                await router.handleWorkspaceRootChanged(newPath);
+                outputChannel.appendLine(`[Multi-AI Hub] Workspace root updated to: ${newPath}`);
             }
         })
     );
-
-    // 4. Initialize Gateway Router (now with workspace subsystem)
-    const router = new GatewayRouter(vault, db, registry, guardrails, fileTree, diffEngine);
 
     // 5. Register WebviewViewProvider for Activity Bar Sidebar
     const viewProvider = new HubSidebarViewProvider(context.extensionUri, router);
@@ -102,8 +104,10 @@ export async function activate(context: vscode.ExtensionContext) {
                 title: 'Select Project Folder for Antigravity Hub'
             });
             if (result && result.length > 0) {
-                guardrails.setWorkspaceRoot(result[0].fsPath);
-                vscode.window.showInformationMessage(`Antigravity Hub workspace set to: ${result[0].fsPath}`);
+                const newPath = result[0].fsPath;
+                guardrails.setWorkspaceRoot(newPath);
+                await router.handleWorkspaceRootChanged(newPath);
+                vscode.window.showInformationMessage(`Antigravity Hub workspace set to: ${newPath}`);
             }
         })
     );

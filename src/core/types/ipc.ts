@@ -51,6 +51,14 @@ export interface ModelUsageSummary {
     lastUsedTimestamp: number;
 }
 
+export interface FolderChatSummary {
+    workspacePath: string;
+    folderName: string;
+    lastUpdated: number;
+    messageCount: number;
+    preview: string;
+}
+
 /**
  * Messages sent from Webview to Extension Host
  */
@@ -68,6 +76,9 @@ export type WebviewToHostMessage =
     | { type: 'SEND_PROMPT'; prompt: string; providerId: string; modelId: string; attachments?: any[]; clientMessageId?: string }
     | { type: 'ABORT_PROMPT'; requestId: string }
     | { type: 'CLEAR_HISTORY' }
+    | { type: 'LIST_FOLDER_CHATS' }
+    | { type: 'LOAD_FOLDER_CHAT'; workspacePath: string }
+    | { type: 'DELETE_FOLDER_CHAT'; workspacePath: string }
     | { type: 'RESOLVE_AMBIGUOUS_CHOICE'; requestId: string; action: 'retry_with_fallback' | 'cancel' }
     | { type: 'OPEN_EXTERNAL_URL'; url: string }
     // Phase 7: Workspace
@@ -112,7 +123,9 @@ export type HostToWebviewMessage =
               details: string;
           }>;
           workspaceRoot: string | null;
+          currentFolderChatName?: string;
       }
+    | { type: 'FOLDER_CHATS_LIST'; chats: FolderChatSummary[]; currentWorkspacePath: string | null }
     | { type: 'USER_MESSAGE_COMMITTED'; message: ChatMessage }
     | { type: 'KEY_SAVED'; providerId: string; success: boolean }
     | { type: 'KEY_DELETED'; providerId: string }
