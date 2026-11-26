@@ -2,11 +2,12 @@
   "name": "antigravity-multi-ai-hub",
   "displayName": "Antigravity Multi-AI Hub",
   "description": "Companion multi-provider AI coding assistant beside Google Antigravity IDE with manual model selection and resilient fallback.",
+  "version": "0.1.0",
   "license": "MIT",
   "publisher": "Guruvishnu444",
   "repository": {
     "type": "git",
-    "url": "https://github.com/antigravity-hub/antigravity-multi-ai-hub"
+    "url": "https://github.com/Guruvishnu444/AI-HUB-"
   },
   "engines": {
     "vscode": "^1.90.0"

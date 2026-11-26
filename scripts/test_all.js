@@ -1,32 +1,28 @@
 const assert = require('assert');
 const path = require('path');
 const esbuild = require('esbuild');
+const fs = require('fs');
+const os = require('os');
 
 // Bundle the WorkspaceGuardrails TypeScript source for Node usage
-const guardBuild = esbuild.buildSync({
+const stubPath = path.join(os.tmpdir(), 'vscode-stub.js');
+fs.writeFileSync(stubPath, 'module.exports={Uri:{file:p=>p}};');
+const bundleOut = path.join(os.tmpdir(), 'guardrails.test.bundle.js');
+esbuild.buildSync({
     entryPoints: [path.resolve(__dirname, '../src/workspace/guardrails.ts')],
     bundle: true,
     platform: 'node',
-    external: ['vscode'],
-    define: { 'process.env.NODE_ENV': '"test"' },
-    plugins: [{
-        name: 'pathAlias',
-        setup(build) {
-            // Use Windows path implementation for correct separators
-            build.onResolve({ filter: '^path$' }, args => ({
-                path: require.resolve('path/win32')
-            }));
-        }
-    }],
-    write: false,
+    outfile: bundleOut,
+    alias: { vscode: stubPath, path: 'path/win32' },
+    logLevel: 'error',
+    write: true,
 });
 
-const { WorkspaceGuardrails } = require(guardBuild.outputFiles[0].text);
+const { WorkspaceGuardrails } = require(bundleOut);
 const guard = new WorkspaceGuardrails();
 guard.setWorkspaceRoot('D:\\projects\\myapp');
 
 function isPathSafe(...args) {
-    // Accept either (workspaceRoot, target) or just target (using current root)
     const targetPath = args.length === 2 ? args[1] : args[0];
     const result = guard.validatePath(targetPath);
     return result.allowed;
@@ -38,13 +34,8 @@ function isFileBlacklisted(targetPath) {
 }
 
 function runTest(name, fn) {
-    try {
-        fn();
-        console.log(`[PASS] ${name}`);
-    } catch (err) {
-        console.error(`[FAIL] ${name}`);
-        console.error(`   Error: ${err.message}`);
-    }
+    try { fn(); console.log(`[PASS] ${name}`); }
+    catch (err) { console.error(`[FAIL] ${name}`); console.error(`   Error: ${err.message}`); }
 }
 
 console.log('================================================================');
@@ -108,14 +99,12 @@ runTest('Block sensitive credential files (.env, id_rsa, secrets)', () => {
     assert.strictEqual(isFileBlacklisted('test.py'), false);
 });
 
-// ------------------- 2. Error Sanitization & Secret Leak Prevention -------------------
+// ------------------- 2. Error Sanitization & Secret Redaction -------------------
 console.log('\n--- 2. Secret Redaction & Error Sanitization ---');
 
 function sanitizeError(rawMessage, apiKey) {
     let msg = String(rawMessage);
-    if (apiKey && apiKey.length > 5) {
-        msg = msg.split(apiKey).join('[REDACTED_API_KEY]');
-    }
+    if (apiKey && apiKey.length > 5) { msg = msg.split(apiKey).join('[REDACTED_API_KEY]'); }
     return msg;
 }
 
@@ -127,5 +116,34 @@ runTest('Completely redact API keys from error messages', () => {
     assert.strictEqual(sanitized.includes('[REDACTED_API_KEY]'), true);
 });
 
-// Additional test sections (quota, model hygiene, etc.) remain unchanged from original file.
-// For brevity they are omitted here but will be executed if present later in the file.
+// ------------------- 3. CSP & UI Verification -------------------
+console.log('\n--- 3. CSP & UI Verification ---');
+
+function getUiHtml() {
+    const uiPath = path.resolve(__dirname, '../src/webview/ui.ts');
+    const content = fs.readFileSync(uiPath, 'utf8');
+    const fnMatch = content.match(/export function getWebviewHtml\(\)\s*:\s*string\s*{([\s\S]*?)}\s*$/m);
+    if (!fnMatch) throw new Error('getWebviewHtml not found');
+    const fnBody = fnMatch[1];
+    const fn = new Function('escapeHtml', fnBody + '\nreturn getWebviewHtml();');
+    const escapeHtml = (s) => s;
+    return fn(escapeHtml);
+}
+
+runTest('CSP contains only default-src none and no http/https or vscode-resource', () => {
+    const html = getUiHtml();
+    const metaMatch = html.match(/<meta http-equiv="Content-Security-Policy" content="([^"]+)"/);
+    assert.ok(metaMatch, 'CSP meta tag not found');
+    const csp = metaMatch[1];
+    assert.ok(csp.includes("default-src 'none'"), 'default-src missing');
+    assert.ok(!csp.includes('http:'), 'http: should not be present');
+    assert.ok(!csp.includes('https:'), 'https: should not be present');
+    assert.ok(!csp.includes('vscode-resource'), 'vscode-resource should not be present');
+    assert.ok(csp.includes('style-src \'unsafe-inline\''), 'style-src missing');
+    assert.ok(csp.includes('script-src \'unsafe-inline\''), 'script-src missing');
+    assert.ok(csp.includes('img-src data:'), 'img-src missing');
+});
+
+// ------------------- SUMMARY -------------------
+console.log('\nAll sections completed.');
+process.exit(0);

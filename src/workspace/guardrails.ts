@@ -1,5 +1,6 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
+import * as fs from 'fs';
 
 /**
  * File patterns that must never be read or sent to any AI provider.
@@ -28,7 +29,7 @@ const BLOCKED_PATTERNS: RegExp[] = [
     /\.kube\/config$/i,
     /secrets?\.(json|yaml|yml|toml)$/i,
     /private[-_]?key\.(json|pem|key)$/i,
-    /(^|\/)tokens?\.(json|txt)$/i,
+    /(^|\/ )tokens?\.(json|txt)$/i,
     /(^|\/ )\.git\/config$/i,
     /\.git-credentials$/i,
     /\.pypirc$/i
@@ -56,9 +57,32 @@ export interface PathValidationResult {
 
 export class WorkspaceGuardrails {
     private workspaceRoot: string | null = null;
+    private realRoot: string | null = null;
+
+    private static resolveReal(p: string): string {
+        let current = p;
+        const rest: string[] = [];
+        for (;;) {
+            try {
+                const real = fs.realpathSync(current);
+                return rest.length ? path.join(real, ...rest.reverse()) : real;
+            } catch (_) {
+                const parent = path.dirname(current);
+                if (parent === current) return p;
+                rest.push(path.basename(current));
+                current = parent;
+            }
+        }
+    }
+
+    private static isInside(base: string, target: string): boolean {
+        const rel = path.relative(base, target);
+        return rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel));
+    }
 
     public setWorkspaceRoot(root: string): void {
         this.workspaceRoot = path.normalize(root);
+        this.realRoot = WorkspaceGuardrails.resolveReal(this.workspaceRoot);
     }
 
     public getWorkspaceRoot(): string | null {
@@ -77,19 +101,12 @@ export class WorkspaceGuardrails {
 
         const normalizedRequest = path.normalize(path.resolve(this.workspaceRoot, requestedPath));
 
-        // Resolve symlinks if possible (optional improvement)
-        let realPath: string;
-        try {
-            const fs = require('fs');
-            realPath = fs.realpathSync(normalizedRequest);
-        } catch (_) {
-            realPath = normalizedRequest;
-        }
+        // Resolve symlinks
+        const realPath = WorkspaceGuardrails.resolveReal(normalizedRequest);
 
-        // 1. Path traversal check using relative calculation (case‑insensitive on Windows)
-        const rel = path.relative(this.workspaceRoot, realPath);
-        const inside = rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel));
-        if (!inside) {
+        // Path traversal checks
+        if (!WorkspaceGuardrails.isInside(this.workspaceRoot, normalizedRequest) ||
+            !WorkspaceGuardrails.isInside(this.realRoot ?? this.workspaceRoot, realPath)) {
             return {
                 allowed: false,
                 isBlocked: true,
@@ -98,13 +115,16 @@ export class WorkspaceGuardrails {
             };
         }
 
-        const filename = path.basename(realPath);
-        // Normalise for pattern matching on Windows (use forward slashes)
-        const relForMatch = rel.split(path.sep).join('/');
+        const filename = path.basename(normalizedRequest);
+        const realFilename = path.basename(realPath);
+        const rel = path.relative(this.workspaceRoot, normalizedRequest).split(path.sep).join('/');
+        const realRel = this.realRoot ? path.relative(this.realRoot, realPath).split(path.sep).join('/') : '';
 
-        // 2. Blocked patterns — hard deny (test both filename and relative path)
+        const candidates = [filename, realFilename, rel, realRel];
+
+        // Blocked patterns — hard deny
         for (const pattern of BLOCKED_PATTERNS) {
-            if (pattern.test(filename) || pattern.test(relForMatch)) {
+            if (candidates.some(c => pattern.test(c))) {
                 return {
                     allowed: false,
                     isBlocked: true,
@@ -114,9 +134,9 @@ export class WorkspaceGuardrails {
             }
         }
 
-        // 3. Sensitive patterns — warn but allow
+        // Sensitive patterns — warn but allow
         for (const pattern of SENSITIVE_PATTERNS) {
-            if (pattern.test(filename) || pattern.test(relForMatch)) {
+            if (candidates.some(c => pattern.test(c))) {
                 return {
                     allowed: true,
                     isBlocked: false,
