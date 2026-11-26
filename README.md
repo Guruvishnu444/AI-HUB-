@@ -1,146 +1,202 @@
-# Antigravity Multi-AI Hub
+# ⚡ Antigravity Multi-AI Hub
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue.svg)](https://www.typescriptlang.org/)
-[![VS Code API](https://img.shields.io/badge/VS%20Code%20API-%5E1.90-007ACC.svg)](https://code.visualstudio.com/api)
-[![Platform](https://img.shields.io/badge/Platform-Windows%2011-informational.svg)](#requirements)
-[![Version](https://img.shields.io/badge/version-0.1.0-green.svg)](CHANGELOG.md)
+### A multi-provider AI coding companion for Google Antigravity
 
-A companion extension for **Google Antigravity IDE** that puts a multi-provider AI chat and coding agent in a side panel. Bring your own API keys, pick any model yourself, and let the built-in fallback engine switch to another provider when one is rate-limited or down.
+**One workspace. Multiple AI providers. Approval-first file changes.**
 
-> **Independent project.** This is a community extension. It is not affiliated with or endorsed by Google, and it does not modify Antigravity's built-in models, agents, or system files. Antigravity has no public API for adding third-party models to its own model dropdown, so the Hub runs as a separate panel beside your editor.
+[![Version](https://img.shields.io/badge/version-0.1.0-00bfff?style=for-the-badge)](https://github.com/Guruvishnu444/AI-HUB-/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Windows%2011-0078D4?style=for-the-badge&logo=windows)](https://www.microsoft.com/windows)
+[![Built with TypeScript](https://img.shields.io/badge/Built%20with-TypeScript-3178C6?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org/)
 
----
+A companion extension that brings multiple AI providers into a dedicated panel beside your editor. Choose the model you want, connect it to a selected project workspace, and use an agent to inspect files and propose changes — with a human approval step before edits are written.
 
-## Features
-
-### Multiple providers, your own keys
-
-| Provider | Protocol | Built-in models |
-| :--- | :--- | :--- |
-| Google Gemini | Native (`v1beta`) | `gemini-2.5-flash`, `gemini-2.5-pro`, `gemini-2.0-flash`, `gemini-1.5-flash`, `gemini-1.5-pro` |
-| DeepSeek | OpenAI-compatible | `deepseek-chat`, `deepseek-reasoner` |
-| OpenAI | OpenAI-compatible | `gpt-4o`, `gpt-4o-mini` |
-| Anthropic Claude | Native | `claude-3-5-sonnet-20241022`, `claude-3-7sonnet-20250219` |
-| OpenRouter | OpenAI-compatible | Discover models from the provider |
-| Groq | OpenAI-compatible | Discover models from the provider |
-
-- **Custom providers:** add any OpenAI-compatible base URL and model ID in the Provider Manager. Local servers such as Ollama or LM Studio expose this kind of endpoint, but they have not been tested with the Hub yet.
-- **Provider Manager:** save or delete a key, ping a connection, discover models, enable or disable individual models, clean up unused providers, and purge non-chat models.
-
-### Chat and agent mode
-
-- **Manual model selection:** you choose the provider and model; nothing is routed behind your back except by your fallback rules.
-- **Agent mode:** the model can list files, read files, search files, read the active file's context, create files, and propose edits. A run is capped at 20 steps by default.
-- **Approval first:** every file creation or edit is shown as a diff and is written to disk only after you click **Approve and Save**. The agent does **not** run shell commands.
-- **Folder chats:** each project folder keeps its own chat history. Switch folders from the **Folder Chats** menu and the right history is restored.
-- **Stop button:** abort a running prompt at any time.
-
-### Resilient fallback
-
-- Configurable priority order. The default is Gemini, then DeepSeek.
-- Automatic retries per provider (default 2) when a request fails with a switchable error such as a rate limit, quota, or high-demand response.
-- Circuit breaker: after repeated failures (default 3) a provider is skipped for a cool-down (default 60 seconds), then probed again.
-- Daily‑quota failures are told apart from short rate‑limit spikes.
-- **Ambiguous failure protection:** if the connection drops after a request was sent, the Hub asks whether to retry with a fallback provider or cancel, so you are not billed twice by surprise.
-- Context trimming: history is trimmed to fit the target model's context window when the provider changes. The token count is an estimate (about 4 characters per token).
-
-All fallback settings can be changed in the **Fallback Rules** tab.
-
-### Usage and audit
-
-- Token totals, per‑model usage, latency, and whether a fallback happened.
-- An audit log of requests, fallbacks, retries, key changes, and errors.
-- Usage data is stored locally (the most recent 500 requests are kept).
-
-### Security
-
-- **API keys** are stored with the editor's `SecretStorage` (the operating system credential store). They are not written to the Hub's state files or to Git.
-- **Workspace boundary:** the Hub can only touch files inside the project folder you select. Path traversal (`..\\`) and symlinks or junctions that point outside the folder are denied.
-- **Blocked files:** credential and secret files are never read or sent to a provider, for example `.env*`, private keys (`*.pem`, `*.key`, `id_rsa`, `id_ed25519`), `.npmrc`, `.netrc`, `.pypirc`, `.git\\config`, `.git-credentials`, `.aws\\credentials`, `.kube\\config`, `credentials.json`, `secrets.*`, and service‑account files.
-- **Sensitive files** (other configuration files) trigger a warning and need your confirmation before they are sent.
-- **Webview hardening:** the panel uses a strict Content‑Security‑Policy (`default-src 'none'`) with no remote scripts, styles, or images, and escapes model output before showing it.
+[Explore the Repository](https://github.com/Guruvishnu444/AI-HUB-) · [Report an Issue](https://github.com/Guruvishnu444/AI-HUB-/issues) · [View Changelog](CHANGELOG.md)
 
 ---
 
-## Requirements
+## ✨ What is Antigravity Multi-AI Hub?
 
-- Windows 11 (the primary development and test platform; other systems use the standard extension API but are untested).
-- Google Antigravity IDE, or another editor that supports VS Code extensions (`engines.vscode` is `^1.90.0`).
-- An API key for at least one provider.
-- To build from source: Node.js 18 or newer (developed on Node 24) and npm.
+Antigravity Multi-AI Hub is a VS Code-compatible extension designed to work alongside Google Antigravity IDE. It provides a separate multi-provider chat and coding-agent workspace, so you can select an AI model, ask questions about a project, and let the agent work with files inside a folder you explicitly choose.
 
----
+The Hub is designed around three principles:
 
-## Install
+- **Model choice:** select the provider and model you want to use.
+- **Workspace boundaries:** limit agent file access to the selected project folder and block sensitive files.
+- **Human approval:** review proposed file changes before they are saved.
 
-### From a `.vsix` file
+> **Independence notice:** This is an independent community project. It is not affiliated with, endorsed by, or sponsored by Google. It does not replace or modify Antigravity's built-in models, agents, or system files. The Hub operates as a separate panel beside the editor.
 
-1. Get `antigravity-multi-ai-hub-0.1.0.vsix` from the project's Releases page, or [build it yourself](#build-from-source).
-2. In Antigravity, open the **Extensions** panel.
-3. Click the **`...`** menu at the top of the panel and choose **Install from VSIX...**.
-4. Select the `.vsix` file and reload the window if you are asked to.
+## 🎬 Agent and workspace workflow
 
-### Build from source
+The animation below illustrates the documented flow from a user prompt through routing, agent tools, workspace protection, diff review, and approval.
 
-```powershell
-git clone https://github.com/Guruvishnu444/AI-HUB-
-cd AI-HUB-
-npm ci
-npm run build:vsix
-```
+<p align="center">
+  <img src="assets/agent-workspace-workflow.gif" alt="Animated workflow showing prompt, model routing, agent tools, workspace access, diff review and approval" width="100%">
+</p>
 
-This creates `antigravity-multi-ai-hub-0.1.0.vsix` in the project folder. Install it as described above.
+**Workflow in plain language**
 
----
-
-## Quick start
-
-1. Click the **Multi‑AI Hub** icon in the Activity Bar (or run **Multi‑AI Hub: Open Full Panel Beside Editor** from the Command Palette).
-2. Open the **Provider Manager** tab, paste an API key for a provider, and click **Save Key**.
-3. Click **Ping Connection** to test the key, then **Discover Models** if the provider supports it.
-4. Open **Workspace and Files** and click **Choose Project Folder** to select the project the Hub may work in.
-5. Go to **Chat and Routing**, choose a model, and type your prompt. Turn on agent mode and click **Run Agent** to let the model read and propose changes to your files.
-6. Review each proposed change in the diff and click **Approve and Save** or **Reject**.
-7. Open **Fallback Rules** to set the provider priority, retries, and circuit‑breaker threshold.
+1. You enter a task in Chat and Routing.
+2. The Hub sends the request to the selected provider through its adapter.
+3. In Agent Mode, the agent loop can use the available workspace tools.
+4. Workspace guardrails keep file operations inside the selected project folder and block known secret files.
+5. Proposed edits are presented for review as a diff.
+6. You choose **Approve and Save** or **Reject**. The agent does not directly run shell commands.
 
 ---
 
-## Commands
+## 🧭 Application guide — page by page
 
-Open the Command Palette (`Ctrl+Shift+P`) and search for **Multi‑AI Hub**.
+The interface is organized into five main pages. Each page has a separate responsibility in the development workflow.
 
-| Command | What it does |
-| :--- | :--- |
-| `Open Full Panel Beside Editor` | Opens the Hub as a full panel next to your code |
-| `Self‑Diagnostic Health Check` | Checks that the extension's components are working |
-| `Select Project Workspace Folder` | Chooses the folder the Hub is allowed to access |
+### 1. Chat and Routing — your AI command centre
 
----
+<p align="center">
+  <img src="assets/01-chat-and-routing.png" alt="Chat and Routing page showing model selection, folder chats, agent mode and prompt input" width="100%">
+</p>
 
-## How it works
+This is the main interaction area where you send prompts and work with your selected AI model.
 
-```
-Webview panel (chat, providers, workspace, fallback, usage)
-        |   messages
-        v
-Message router (src/core/gateway/router.ts)
-        |
-        +--> Agent loop + tool executor ---> Workspace guardrails, diff engine, file tree
-        |
-        v
-Fallback engine (retries, circuit breaker, context trimmer)
-        |
-        v
-Provider adapters: Gemini | DeepSeek | Anthropic | OpenAI‑compatible
-        |
-        v
-Your chosen provider's API
-```
+**What you can do**
 
-Provider settings, models, and chat history are stored as JSON files (`hub_state.json`, `hub_usage.json`, and per‑folder chat files) in the extension's global storage folder. Keys live only in `SecretStorage`.
+- **Active Model:** choose the provider/model for the current conversation.
+- **Capability indicators:** view the model capability labels presented by the interface, such as Vision, Reasoning, Tools, and context size.
+- **Folder Chats:** switch between project-folder conversations and restore their associated chat history.
+- **Clear History:** clear the current chat history.
+- **Prompt composer:** enter a task; press Enter to send or Shift+Enter to add a new line.
+- **Agent Mode:** enable the file-aware agent workflow.
+- **Fix / Debug:** use the interface's debugging-oriented option when working through an issue.
+- **Attach Active Error:** include the active editor error context with your request.
+- **Run Agent:** submit the prompt to the selected model/agent.
 
-For the design, threat model, and fallback state machine, see [`docs/02-architecture.md`](docs/02-architecture.md).
+**Typical use cases**
+
+- Ask questions about code in the selected project.
+- Locate and understand existing implementation.
+- Request a new file or a targeted code change.
+- Ask for help debugging an error.
+- Review agent-proposed changes before saving.
+
+**Recommended workflow:** choose a model → select the correct folder → write a specific task → enable Agent Mode when file operations are needed → run the agent → inspect the diff.
+
+### 2. Provider Manager — connect the models you use
+
+<p align="center">
+  <img src="assets/02-provider-manager.png" alt="Provider Manager page showing secure credential storage and custom provider registration" width="100%">
+</p>
+
+Provider Manager handles the AI services and model configurations available to the Hub.
+
+**Provider support documented by the project**
+
+| Provider | Integration |
+|---|---|
+| Google Gemini | Native Gemini API |
+| DeepSeek | OpenAI-compatible API |
+| OpenAI | OpenAI-compatible API |
+| Anthropic Claude | Native provider adapter |
+| OpenRouter | OpenAI-compatible API |
+| Groq | OpenAI-compatible API |
+| Custom providers | Custom OpenAI-compatible base URL and model ID |
+
+**Provider management capabilities**
+
+- Register a custom provider and model.
+- Configure a provider base URL and model ID.
+- Save or delete provider credentials.
+- Test a provider connection.
+- Discover available models where supported.
+- Enable or disable individual models.
+- Clean up unused providers and non-chat models.
+
+**Credential handling**
+
+The interface indicates Windows DPAPI-backed secure credential storage. The project documentation describes API keys as being stored through the editor's SecretStorage / operating-system credential store rather than in the Hub's ordinary state files or Git repository.
+
+**Security reminder:** never paste an API key into a chat prompt, README, source file, screenshot, or public issue. Use the credential controls provided by the extension.
+
+### 3. Workspace and Files — controlled project access
+
+<p align="center">
+  <img src="assets/03-workspace-and-files.png" alt="Workspace and Files page showing project folder selection, boundary protection, file search and explorer" width="100%">
+</p>
+
+This page connects the Hub to the project folder the agent is allowed to inspect and modify.
+
+**Page sections**
+
+| Section | Purpose |
+|---|---|
+| Project Workspace | Select the active project folder and refresh its file list. |
+| Boundary Protection and Guardrails | Enforce the selected workspace boundary and sensitive-file restrictions. |
+| Search Project Files | Search the selected project using a path or filename pattern. |
+| Workspace File Explorer | Browse the folders and files detected inside the workspace. |
+
+**How workspace access works**
+
+1. Choose a project folder using **Choose Project Folder**.
+2. Refresh the workspace file list when needed.
+3. Search for a file or browse the file explorer.
+4. Ask the agent to inspect or work with relevant files.
+5. Review proposed changes before approving them.
+
+**Boundary protection**
+
+The project documentation describes protections against path traversal and symlinks/junctions that point outside the selected folder. Known credential and secret files are blocked from being read or sent to a provider. Other sensitive configuration files may require a warning and confirmation.
+
+Examples of blocked file patterns documented by the project include `.env*`, private-key files, `.npmrc`, `.netrc`, `.pypirc`, Git credentials, cloud credentials, and service‑account files.
+
+> Workspace access is not unrestricted computer control. The documented agent tools focus on project-file operations, and the agent does not execute shell commands.
+
+### 4. Fallback Rules — resilience when a provider fails
+
+<p align="center">
+  <img src="assets/04-fallback-rules.png" alt="Fallback Rules page showing automatic fallback, provider priority, retry and circuit breaker settings" width="100%">
+</p>
+
+The fallback engine helps a request continue when a provider encounters a supported temporary failure, rate limit, quota issue, or outage.
+
+**Configuration explained**
+
+- **Enable Automatic Fallback:** turn automatic provider switching on or off.
+- **Priority Chain Order:** set the order in which configured providers should be attempted.
+- **Max Immediate Retries:** configure how many retries are attempted for supported retryable failures.
+- **Circuit Breaker Failure Threshold:** determine how many failures trigger a temporary provider skip.
+
+**How fallback behaves**
+
+1. A request is sent to the selected provider.
+2. If a supported retryable failure occurs, the Hub can retry according to the configured policy.
+3. If the provider continues failing, the circuit breaker can temporarily skip it.
+4. The next eligible provider in the configured priority chain may be selected.
+5. The Hub can trim conversation history to fit the target model's context window.
+
+The project also documents protection for ambiguous network failures: when a connection drops after a request may already have been sent, the Hub asks whether to retry through a fallback provider or cancel, helping avoid unexpected duplicate requests.
+
+**Important:** fallback depends on the providers you have configured and the type of error received. It does not guarantee that every failed request can be recovered.
+
+### 5. Usage and Audit — understand activity and consumption
+
+<p align="center">
+  <img src="assets/05-usage-and-audit.png" alt="Usage and Audit page showing token totals, model breakdown and activity audit log" width="100%">
+</p>
+
+This page gives visibility into model activity and fallback events.
+
+**Dashboard areas**
+
+- **Cumulative Consumption:** total tokens processed and total requests dispatched.
+- **AI Models Usage Breakdown:** per-model request count, prompt tokens, completion tokens, total tokens, and average latency.
+- **Fallback and Activity Audit Log:** activity records for requests, retries, provider fallsbacks, credential changes, and errors.
+
+The project documentation states that usage data is stored locally and retains the most recent 500 requests.
+
+**Why this matters**
+
+- Understanding token usage helps control costs.
+- Audit logs provide traceability for changes made by the agent.
+- Fallback visibility helps diagnose provider reliability issues.
 
 ---
 
@@ -200,9 +256,3 @@ For the design, threat model, and fallback state machine, see [`docs/02-architec
 - Local model servers (Ollama, LM Studio) are untested.
 
 ---
-
-## Screenshots
-
-![Screenshot 1](file:///C:/Users/guruv/.gemini/antigravity/brain/cf9d190a-aa3c-48ac-8bef-73390b9cb64c/.user_uploaded/media_1795499255996_a0f80e69.png)
-![Screenshot 2](file:///C:/Users/guruv/.gemini/antigravity/brain/cf9d190a-aa3c-48ac-8bef-73390b9cb64c/.user_uploaded/media_1795498095927_10304e0f.png)
-![Screenshot 3](file:///C:/Users/guruv/.gemini/antigravity/brain/cf9d190a-aa3c-48ac-8bef-73390b9cb64c/.user_uploaded/media_1795444823255_824a50a8.png)
