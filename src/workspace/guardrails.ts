@@ -21,14 +21,17 @@ const BLOCKED_PATTERNS: RegExp[] = [
     /known_hosts$/i,
     /\.npmrc$/i,
     /\.netrc$/i,
-    /credentials(\.json)?$/i,
+    /(^|\/ )credentials(\.json)?$/i,
     /service[-_]account(\.json)?$/i,
     /gcloud\/application_default_credentials\.json$/i,
     /\.aws\/credentials$/i,
     /\.kube\/config$/i,
     /secrets?\.(json|yaml|yml|toml)$/i,
     /private[-_]?key\.(json|pem|key)$/i,
-    /token(s)?\.(json|txt)$/i
+    /(^|\/)tokens?\.(json|txt)$/i,
+    /(^|\/ )\.git\/config$/i,
+    /\.git-credentials$/i,
+    /\.pypirc$/i
 ];
 
 /**
@@ -66,7 +69,6 @@ export class WorkspaceGuardrails {
      * Validates that a requested path is:
      * 1. Within the designated workspace root (no path traversal)
      * 2. Not a blocked credential/secret file
-     * Returns a result object indicating whether access is allowed and why.
      */
     public validatePath(requestedPath: string): PathValidationResult {
         if (!this.workspaceRoot) {
@@ -75,8 +77,19 @@ export class WorkspaceGuardrails {
 
         const normalizedRequest = path.normalize(path.resolve(this.workspaceRoot, requestedPath));
 
-        // 1. Path traversal check: must stay inside workspaceRoot
-        if (!normalizedRequest.startsWith(this.workspaceRoot + path.sep) && normalizedRequest !== this.workspaceRoot) {
+        // Resolve symlinks if possible (optional improvement)
+        let realPath: string;
+        try {
+            const fs = require('fs');
+            realPath = fs.realpathSync(normalizedRequest);
+        } catch (_) {
+            realPath = normalizedRequest;
+        }
+
+        // 1. Path traversal check using relative calculation (case‑insensitive on Windows)
+        const rel = path.relative(this.workspaceRoot, realPath);
+        const inside = rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel));
+        if (!inside) {
             return {
                 allowed: false,
                 isBlocked: true,
@@ -85,12 +98,13 @@ export class WorkspaceGuardrails {
             };
         }
 
-        const filename = path.basename(normalizedRequest);
-        const relativePath = normalizedRequest.substring(this.workspaceRoot.length + 1);
+        const filename = path.basename(realPath);
+        // Normalise for pattern matching on Windows (use forward slashes)
+        const relForMatch = rel.split(path.sep).join('/');
 
-        // 2. Blocked patterns — hard deny
+        // 2. Blocked patterns — hard deny (test both filename and relative path)
         for (const pattern of BLOCKED_PATTERNS) {
-            if (pattern.test(filename) || pattern.test(relativePath)) {
+            if (pattern.test(filename) || pattern.test(relForMatch)) {
                 return {
                     allowed: false,
                     isBlocked: true,
@@ -102,7 +116,7 @@ export class WorkspaceGuardrails {
 
         // 3. Sensitive patterns — warn but allow
         for (const pattern of SENSITIVE_PATTERNS) {
-            if (pattern.test(filename) || pattern.test(relativePath)) {
+            if (pattern.test(filename) || pattern.test(relForMatch)) {
                 return {
                     allowed: true,
                     isBlocked: false,

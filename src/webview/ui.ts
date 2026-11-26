@@ -3,6 +3,7 @@ export function getWebviewHtml(): string {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' vscode-resource: https:; script-src 'unsafe-inline' vscode-resource: https:; img-src data: https: vscode-resource:;">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Antigravity Multi-AI Hub</title>
     <style>
@@ -657,7 +658,7 @@ export function getWebviewHtml(): string {
             fallbackConfig: { enabled: true, priorityOrder: ['google-gemini', 'deepseek'], maxRetriesPerProvider: 2, circuitBreakerThreshold: 3 },
             messages: [],
             activeProviderId: 'google-gemini',
-            activeModelId: 'gemini-3.8-flash',
+            activeModelId: 'gemini-2.5-flash',
             currentRequestId: null,
             modelUsage: [],
             totalTokens: 0,
@@ -687,9 +688,20 @@ export function getWebviewHtml(): string {
             if (activePane) activePane.classList.add('active');
         }
 
+        // Proactively request initial state immediately upon script execution
+        try {
+            vscode.postMessage({ type: 'INIT_STATE' });
+        } catch (e) {}
+
         window.addEventListener('DOMContentLoaded', () => {
             vscode.postMessage({ type: 'INIT_STATE' });
         });
+
+        setTimeout(() => {
+            if (!state.providers || state.providers.length === 0) {
+                vscode.postMessage({ type: 'INIT_STATE' });
+            }
+        }, 350);
 
         window.addEventListener('message', event => {
             const msg = event.data;
@@ -708,18 +720,14 @@ export function getWebviewHtml(): string {
                         state.messages = merged;
                     }
                     state.activeProviderId = msg.activeProviderId || state.activeProviderId;
-                    // Guard against deprecated model IDs coming back from persisted state
+                    // Migrate broken or non-multiturn models if previously stored
                     {
-                        const deprecatedSet = new Set([
-                            'gemini-2.5-flash','gemini-2.5-flash-preview-05-20','gemini-2.5-flash-preview',
-                            'gemini-2.5-pro','gemini-2.5-pro-preview-06-05','gemini-2.5-pro-preview',
-                            'gemini-2.0-flash','gemini-2.0-flash-preview','gemini-2.0-pro',
-                            'gemini-1.5-flash','gemini-1.5-pro','gemini-1.0-pro','gemini-pro'
-                        ]);
                         const incoming = msg.activeModelId || state.activeModelId;
-                        state.activeModelId = deprecatedSet.has(incoming) ? 'gemini-3.8-flash' : incoming;
-                        if (deprecatedSet.has(incoming)) {
+                        if (incoming === 'gemini-3.8-flash' || incoming === 'gemini-3.8-pro' || incoming === 'gemini-1.0-pro' || incoming === 'gemini-pro' || incoming === 'gemini-pro-vision') {
+                            state.activeModelId = 'gemini-2.5-flash';
                             state.activeProviderId = 'google-gemini';
+                        } else {
+                            state.activeModelId = incoming;
                         }
                     }
                     state.modelUsage = msg.modelUsage || [];
@@ -727,7 +735,7 @@ export function getWebviewHtml(): string {
                     state.totalRequests = msg.totalRequests || 0;
                     state.auditLogs = msg.auditLogs || [];
                     state.workspaceRoot = msg.workspaceRoot || null;
-                    state.currentFolderChatName = msg.currentFolderChatName || (state.workspaceRoot ? state.workspaceRoot.split(/[/\\]/).pop() : 'Global');
+                    state.currentFolderChatName = msg.currentFolderChatName || (state.workspaceRoot ? state.workspaceRoot.replace(/\\\\/g, '/').split('/').pop() : 'Global');
 
                     const folderBadge = document.getElementById('active-folder-chat-badge');
                     if (folderBadge) {
@@ -976,6 +984,8 @@ export function getWebviewHtml(): string {
                     if (thPanelE) thPanelE.style.display = 'none';
                     if (thStepsE) thStepsE.innerHTML = '';
                     showToast('Agent error: ' + msg.errorMessage);
+                    // Sync from server to display persisted error message without client-side duplicate
+                    vscode.postMessage({ type: 'INIT_STATE' });
                     break;
                 }
 
@@ -996,14 +1006,6 @@ export function getWebviewHtml(): string {
             const select = document.getElementById('model-selector');
             select.innerHTML = '';
 
-            // Deprecated Gemini model IDs that must never appear in the dropdown
-            const deprecatedIds = new Set([
-                'gemini-2.5-flash', 'gemini-2.5-flash-preview-05-20', 'gemini-2.5-flash-preview',
-                'gemini-2.5-pro', 'gemini-2.5-pro-preview-06-05', 'gemini-2.5-pro-preview',
-                'gemini-2.0-flash', 'gemini-2.0-flash-preview', 'gemini-2.0-pro',
-                'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-1.0-pro', 'gemini-pro'
-            ]);
-
             let allModels = [];
             // ONLY display models from providers that are enabled AND have an API key configured (or local servers)
             state.providers.forEach(p => {
@@ -1016,9 +1018,12 @@ export function getWebviewHtml(): string {
                             m.id.includes('imagen') ||
                             m.id.includes('whisper') ||
                             m.id.includes('bison') ||
+                            m.id.includes('vision') ||
+                            m.id === 'gemini-3.8-pro' ||
+                            m.id === 'gemini-3.8-flash' ||
                             (m.providerId === 'google-gemini' && m.id.includes('gemma'))
                         );
-                        if (m.isEnabled && !deprecatedIds.has(m.id) && !isUnwanted) {
+                        if (m.isEnabled && !isUnwanted) {
                             allModels.push({ ...m, providerName: p.config.name });
                         }
                     });
@@ -1030,7 +1035,18 @@ export function getWebviewHtml(): string {
                 const geminiProvider = state.providers.find(p => p.config.id === 'google-gemini');
                 if (geminiProvider) {
                     geminiProvider.models.forEach(m => {
-                        if (m.isEnabled && !deprecatedIds.has(m.id) && (m.id.includes('3.8') || m.id.includes('flash') || m.id.includes('pro'))) {
+                        const isUnwanted = !m.isCustom && (
+                            m.id.includes('embedding') ||
+                            m.id.includes('aqa') ||
+                            m.id.includes('imagen') ||
+                            m.id.includes('whisper') ||
+                            m.id.includes('bison') ||
+                            m.id.includes('vision') ||
+                            m.id === 'gemini-3.8-pro' ||
+                            m.id === 'gemini-3.8-flash' ||
+                            (m.providerId === 'google-gemini' && m.id.includes('gemma'))
+                        );
+                        if (m.isEnabled && !isUnwanted) {
                             allModels.push({ ...m, providerName: geminiProvider.config.name });
                         }
                     });
@@ -1043,12 +1059,6 @@ export function getWebviewHtml(): string {
                 state.activeProviderId = allModels[0].providerId;
                 state.activeModelId = allModels[0].id;
                 vscode.postMessage({ type: 'SET_ACTIVE_MODEL', providerId: state.activeProviderId, modelId: state.activeModelId });
-            }
-
-            // If the currently selected model is deprecated, reset to gemini-3.8-flash
-            if (deprecatedIds.has(state.activeModelId)) {
-                state.activeModelId = 'gemini-3.8-flash';
-                state.activeProviderId = 'google-gemini';
             }
 
             allModels.forEach(m => {
@@ -1078,11 +1088,11 @@ export function getWebviewHtml(): string {
             const badges = document.getElementById('model-badges');
             badges.innerHTML = '';
             if (model) {
-                const caps = model.capabilities;
+                const caps = model.capabilities || {};
                 if (caps.supportsVision) badges.innerHTML += '<span class="badge badge-blue">Vision</span>';
                 if (caps.supportsReasoningContent) badges.innerHTML += '<span class="badge badge-amber">Reasoning</span>';
                 if (caps.supportsTools) badges.innerHTML += '<span class="badge badge-green">Tools</span>';
-                const ctxK = Math.round(caps.maxContextTokens / 1024);
+                const ctxK = Math.round((caps.maxContextTokens || 128000) / 1024);
                 badges.innerHTML += \`<span class="badge badge-gray">\${ctxK}k Ctx</span>\`;
             }
         }
@@ -1409,8 +1419,9 @@ export function getWebviewHtml(): string {
         }
 
         function escapeHtml(text) {
-            if (!text) return '';
-            return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\\n/g, '<br>');
+            if (text === null || text === undefined) return '';
+            const str = typeof text === 'string' ? text : String(text);
+            return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\\n/g, '<br>');
         }
 
         function sendPrompt() {
@@ -1532,6 +1543,12 @@ export function getWebviewHtml(): string {
             if (state.currentRequestId) {
                 vscode.postMessage({ type: 'ABORT_PROMPT', requestId: state.currentRequestId });
             }
+            const sendBtn = document.getElementById('send-btn');
+            const abortBtn = document.getElementById('abort-btn');
+            if (sendBtn) sendBtn.style.display = 'block';
+            if (abortBtn) abortBtn.style.display = 'none';
+            const thPanel = document.getElementById('agent-thinking-panel');
+            if (thPanel) thPanel.style.display = 'none';
         }
 
         function clearChat() {
@@ -1586,8 +1603,8 @@ export function getWebviewHtml(): string {
                     '    <div style="font-size:9.5px; opacity:0.5; margin-top:2px;">Last active: ' + timeStr + '</div>',
                     '  </div>',
                     '  <div style="display:flex; gap:6px; align-items:center; flex-shrink:0;">',
-                    !isActive ? '    <button class="primary" style="font-size:10px; padding:2px 8px;" onclick="loadFolderChat(\'' + escapeHtml(c.workspacePath) + '\')">Open Chat</button>' : '',
-                    '    <button class="danger" style="font-size:10px; padding:2px 8px;" onclick="deleteFolderChat(\'' + escapeHtml(c.workspacePath) + '\')">Delete</button>',
+                    !isActive ? '    <button class="primary" style="font-size:10px; padding:2px 8px;" data-ws="' + escapeHtml(c.workspacePath) + '" onclick="loadFolderChat(this.dataset.ws)">Open Chat</button>' : '',
+                    '    <button class="danger" style="font-size:10px; padding:2px 8px;" data-ws="' + escapeHtml(c.workspacePath) + '" onclick="deleteFolderChat(this.dataset.ws)">Delete</button>',
                     '  </div>',
                     '</div>'
                 ].join('');

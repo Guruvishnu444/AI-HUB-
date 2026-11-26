@@ -79,7 +79,21 @@ export class GeminiAdapter extends BaseProviderAdapter {
             .filter((m: any) => {
                 if (!m.name || !m.supportedGenerationMethods?.includes('generateContent')) return false;
                 const id = m.name.replace(/^models\//, '').toLowerCase();
-                if (id.includes('embedding') || id.includes('aqa') || id.includes('imagen') || id.includes('bison') || id.includes('whisper') || id.includes('vision')) {
+                if (
+                    id.includes('embedding') ||
+                    id.includes('aqa') ||
+                    id.includes('imagen') ||
+                    id.includes('bison') ||
+                    id.includes('whisper') ||
+                    id.includes('vision') ||
+                    id.includes('tts') ||
+                    id.includes('moderation') ||
+                    id.includes('flash-lite') ||
+                    id.includes('flash_lite') ||
+                    id.endsWith('-lite') ||
+                    id.includes('gemma') ||
+                    id.includes('robotics')
+                ) {
                     return false;
                 }
                 return true;
@@ -108,11 +122,45 @@ export class GeminiAdapter extends BaseProviderAdapter {
                 };
             });
 
-        // Always guarantee Gemini 3.8 Flash and Gemini 3.8 Pro are present
-        if (!discovered.some(m => m.id === 'gemini-3.8-flash')) {
-            discovered.unshift({
-                id: 'gemini-3.8-flash',
-                displayName: 'Gemini 3.8 Flash',
+        // Ensure core production models are always present
+        const coreModels = [
+            {
+                id: 'gemini-2.5-flash',
+                displayName: 'Gemini 2.5 Flash',
+                providerId: this.providerId,
+                capabilities: {
+                    supportsStreaming: true,
+                    supportsVision: true,
+                    supportsTools: true,
+                    supportsJsonMode: true,
+                    supportsReasoningContent: true,
+                    maxContextTokens: 1048576,
+                    maxOutputTokens: 65536
+                },
+                isCustom: false,
+                isEnabled: true,
+                description: 'Flagship Google model with hybrid reasoning, multimodal vision, and agentic tool use'
+            },
+            {
+                id: 'gemini-1.5-flash',
+                displayName: 'Gemini 1.5 Flash (High Quota)',
+                providerId: this.providerId,
+                capabilities: {
+                    supportsStreaming: true,
+                    supportsVision: true,
+                    supportsTools: true,
+                    supportsJsonMode: true,
+                    supportsReasoningContent: false,
+                    maxContextTokens: 1048576,
+                    maxOutputTokens: 8192
+                },
+                isCustom: false,
+                isEnabled: true,
+                description: 'Fast high-throughput model with 1,500 requests/day free tier quota'
+            },
+            {
+                id: 'gemini-2.0-flash',
+                displayName: 'Gemini 2.0 Flash',
                 providerId: this.providerId,
                 capabilities: {
                     supportsStreaming: true,
@@ -125,14 +173,11 @@ export class GeminiAdapter extends BaseProviderAdapter {
                 },
                 isCustom: false,
                 isEnabled: true,
-                description: 'Google next-gen low-latency multimodal model with tool use'
-            });
-        }
-
-        if (!discovered.some(m => m.id === 'gemini-3.8-pro')) {
-            discovered.push({
-                id: 'gemini-3.8-pro',
-                displayName: 'Gemini 3.8 Pro',
+                description: 'Fast multimodal generation with real-time speed'
+            },
+            {
+                id: 'gemini-2.5-pro',
+                displayName: 'Gemini 2.5 Pro',
                 providerId: this.providerId,
                 capabilities: {
                     supportsStreaming: true,
@@ -141,12 +186,18 @@ export class GeminiAdapter extends BaseProviderAdapter {
                     supportsJsonMode: true,
                     supportsReasoningContent: true,
                     maxContextTokens: 2097152,
-                    maxOutputTokens: 8192
+                    maxOutputTokens: 65536
                 },
                 isCustom: false,
                 isEnabled: true,
-                description: 'Google flagship reasoning model for complex coding and multi-turn workflows'
-            });
+                description: 'Advanced reasoning model with deep multi-step planning and code intelligence'
+            }
+        ];
+
+        for (const cm of coreModels) {
+            if (!discovered.some(m => m.id === cm.id)) {
+                discovered.unshift(cm);
+            }
         }
 
         return discovered;
@@ -208,6 +259,13 @@ export class GeminiAdapter extends BaseProviderAdapter {
             contents.push({ role: 'user', parts: [{ text: 'Hello' }] });
         }
 
+        // Gemini API requires the LAST turn to be a user turn.
+        // If history ends on a model turn (from a prior partial/failed response),
+        // remove trailing model turns so the API does not reject with multiturn error.
+        while (contents.length > 1 && contents[contents.length - 1].role === 'model') {
+            contents.pop();
+        }
+
         const payload: any = { contents };
 
         if (systemText) {
@@ -256,6 +314,14 @@ export class GeminiAdapter extends BaseProviderAdapter {
 
         if (!response.ok) {
             const errBody = await response.text();
+            // If multiturn error is returned, fallback to collapsed single-turn payload
+            if (errBody.includes('Multiturn') || errBody.includes('multiturn') || errBody.includes('not enabled for this model')) {
+                try {
+                    return await this.sendSingleTurnChat(apiKey, request, abortSignal);
+                } catch {
+                    // Fall through to other fallbacks
+                }
+            }
             // If generateContent 404s, 503s, or recommends Interactions API, fallback seamlessly
             if (response.status === 404 || response.status === 503 || errBody.includes('Interactions API') || errBody.includes('not found') || errBody.includes('high demand') || errBody.includes('UNAVAILABLE')) {
                 try {
@@ -352,6 +418,63 @@ export class GeminiAdapter extends BaseProviderAdapter {
         };
     }
 
+    private async sendSingleTurnChat(
+        apiKey: string,
+        request: ChatCompletionRequest,
+        abortSignal?: AbortSignal
+    ): Promise<ChatCompletionResponse> {
+        let systemText = '';
+        const lines: string[] = [];
+
+        for (const msg of request.messages) {
+            if (msg.role === 'system') {
+                systemText += (systemText ? '\n\n' : '') + msg.content;
+                continue;
+            }
+            const speaker = msg.role === 'assistant' ? 'Model' : 'User';
+            lines.push(`${speaker}: ${msg.content}`);
+        }
+
+        const combinedText = lines.join('\n\n') || 'Hello';
+        const modelName = request.modelId.replace(/^models\//, '');
+        const url = `${this.config.baseUrl}/models/${modelName}:generateContent?key=${encodeURIComponent(apiKey)}`;
+
+        const payload: any = {
+            contents: [{ role: 'user', parts: [{ text: combinedText }] }]
+        };
+
+        if (systemText) {
+            payload.systemInstruction = { parts: [{ text: systemText }] };
+        }
+
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-goog-api-key': apiKey
+            },
+            body: JSON.stringify(payload),
+            signal: abortSignal
+        });
+
+        if (!response.ok) {
+            const errBody = await response.text();
+            throw new Error(`HTTP ${response.status}: ${errBody}`);
+        }
+
+        const data = (await response.json()) as any;
+        const candidate = data.candidates?.[0];
+        const content = candidate?.content?.parts?.map((p: any) => p.text).join('') || '';
+
+        return {
+            requestId: request.requestId,
+            content,
+            finishReason: candidate?.finishReason || 'stop',
+            providerId: this.providerId,
+            modelId: request.modelId
+        };
+    }
+
     public async *streamChatCompletion(
         rawKey: string,
         request: ChatCompletionRequest,
@@ -379,6 +502,23 @@ export class GeminiAdapter extends BaseProviderAdapter {
 
         if (!response.ok) {
             const errBody = await response.text();
+            // If model rejects multiturn, retry with single-turn fallback
+            if (errBody.includes('Multiturn') || errBody.includes('multiturn') || errBody.includes('not enabled for this model')) {
+                try {
+                    const completed = await this.sendSingleTurnChat(apiKey, request, abortSignal);
+                    yield {
+                        requestId: request.requestId,
+                        deltaContent: completed.content,
+                        isComplete: true,
+                        finishReason: 'stop',
+                        providerId: this.providerId,
+                        modelId: request.modelId
+                    };
+                    return;
+                } catch {
+                    // Fall through
+                }
+            }
             // If streaming generateContent 404s, 503s or asks for Interactions API, use interactions fallback
             if (response.status === 404 || response.status === 503 || errBody.includes('Interactions API') || errBody.includes('not found') || errBody.includes('high demand') || errBody.includes('UNAVAILABLE')) {
                 try {

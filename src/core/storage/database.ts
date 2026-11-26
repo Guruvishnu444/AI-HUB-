@@ -36,7 +36,7 @@ export class HubDatabase {
     private providers: Map<string, ProviderConfig> = new Map();
     private models: Map<string, ModelMetadata> = new Map();
     private activeProviderId: string = 'google-gemini';
-    private activeModelId: string = 'gemini-3.8-flash';
+    private activeModelId: string = 'gemini-2.5-flash';
     private fallbackConfig: FallbackConfig = {
         enabled: true,
         priorityOrder: ['google-gemini', 'deepseek'],
@@ -131,28 +131,51 @@ export class HubDatabase {
         }
     }
 
-    // Map of deprecated or old model IDs to current verified working replacements
+    // Map of truly deprecated or broken model IDs to current verified working replacements
     private static readonly DEPRECATED_MODEL_IDS: Record<string, string> = {
-        'gemini-2.5-flash':                         'gemini-3.8-flash',
-        'gemini-2.5-flash-preview-05-20':           'gemini-3.8-flash',
-        'gemini-2.5-flash-preview':                 'gemini-3.8-flash',
-        'gemini-2.5-pro':                           'gemini-3.8-pro',
-        'gemini-2.5-pro-preview-06-05':             'gemini-3.8-pro',
-        'gemini-2.5-pro-preview':                   'gemini-3.8-pro',
-        'gemini-2.0-flash':                         'gemini-3.8-flash',
-        'gemini-2.0-flash-preview':                 'gemini-3.8-flash',
-        'gemini-2.0-pro':                           'gemini-3.8-pro',
-        'gemini-1.5-flash':                         'gemini-3.8-flash',
-        'gemini-1.5-pro':                           'gemini-3.8-pro',
-        'gemini-1.0-pro':                           'gemini-3.8-flash',
-        'gemini-pro':                               'gemini-3.8-flash'
+        'gemini-3.8-flash':                         'gemini-2.5-flash',
+        'gemini-3.8-pro':                           'gemini-2.5-pro',
+        'gemini-1.0-pro':                           'gemini-1.5-flash',
+        'gemini-pro':                               'gemini-1.5-flash',
+        'gemini-pro-vision':                        'gemini-1.5-flash',
+        'gemini-1.0-pro-vision-latest':             'gemini-1.5-flash',
+        // lite models are excluded from agent loops — migrate users to full flash
+        'gemini-flash-lite-latest':                 'gemini-2.5-flash',
+        'gemini-2.0-flash-lite':                    'gemini-2.5-flash',
+        'gemini-2.0-flash-lite-latest':             'gemini-2.5-flash'
     };
+
+    /**
+     * Returns true when a model ID is known to be non-chat or low-quality and should
+     * be blocked from storage entirely. Apply to ALL model writes and reads.
+     */
+    private static isUnwantedModel(id: string, providerId: string, isCustom: boolean): boolean {
+        if (isCustom) return false; // Never block user-added custom models
+        const lower = id.toLowerCase();
+        return (
+            lower.includes('embedding') ||
+            lower.includes('aqa') ||
+            lower.includes('imagen') ||
+            lower.includes('whisper') ||
+            lower.includes('bison') ||
+            lower.includes('vision') ||
+            lower.includes('tts') ||
+            lower.includes('dall-e') ||
+            lower.includes('moderation') ||
+            // lite variants — not reliable for function-calling / agent use
+            lower.includes('flash-lite') ||
+            lower.includes('flash_lite') ||
+            lower.endsWith('-lite') ||
+            // Gemma models are open-weight and can't be used via the Gemini API for chat
+            (providerId === 'google-gemini' && lower.includes('gemma'))
+        );
+    }
 
     private seedDefaultModels(): void {
         const defaultModels: ModelMetadata[] = [
             {
-                id: 'gemini-3.8-flash',
-                displayName: 'Gemini 3.8 Flash',
+                id: 'gemini-2.5-flash',
+                displayName: 'Gemini 2.5 Flash',
                 providerId: 'google-gemini',
                 capabilities: {
                     supportsStreaming: true,
@@ -165,11 +188,45 @@ export class HubDatabase {
                 },
                 isCustom: false,
                 isEnabled: true,
-                description: 'Latest Google frontier flash model with native deep reasoning, 1M context, multimodal vision, and agentic tool use.'
+                description: 'Flagship Google model with hybrid thinking reasoning, multimodal vision, and agentic tool use.'
             },
             {
-                id: 'gemini-3.8-pro',
-                displayName: 'Gemini 3.8 Pro',
+                id: 'gemini-1.5-flash',
+                displayName: 'Gemini 1.5 Flash (High Quota)',
+                providerId: 'google-gemini',
+                capabilities: {
+                    supportsStreaming: true,
+                    supportsVision: true,
+                    supportsTools: true,
+                    supportsJsonMode: true,
+                    supportsReasoningContent: false,
+                    maxContextTokens: 1048576,
+                    maxOutputTokens: 8192
+                },
+                isCustom: false,
+                isEnabled: true,
+                description: 'Fast, high-throughput model with generous 1,500 requests/day free tier quota.'
+            },
+            {
+                id: 'gemini-2.0-flash',
+                displayName: 'Gemini 2.0 Flash',
+                providerId: 'google-gemini',
+                capabilities: {
+                    supportsStreaming: true,
+                    supportsVision: true,
+                    supportsTools: true,
+                    supportsJsonMode: true,
+                    supportsReasoningContent: true,
+                    maxContextTokens: 1048576,
+                    maxOutputTokens: 8192
+                },
+                isCustom: false,
+                isEnabled: true,
+                description: 'Fast multimodal generation with real-time speed and low latency.'
+            },
+            {
+                id: 'gemini-2.5-pro',
+                displayName: 'Gemini 2.5 Pro',
                 providerId: 'google-gemini',
                 capabilities: {
                     supportsStreaming: true,
@@ -182,7 +239,24 @@ export class HubDatabase {
                 },
                 isCustom: false,
                 isEnabled: true,
-                description: 'Frontier reasoning model with 2M context, deep multi-step planning, and multimodal code intelligence.'
+                description: 'Advanced reasoning model with 2M context, deep multi-step planning, and complex code intelligence.'
+            },
+            {
+                id: 'gemini-1.5-pro',
+                displayName: 'Gemini 1.5 Pro',
+                providerId: 'google-gemini',
+                capabilities: {
+                    supportsStreaming: true,
+                    supportsVision: true,
+                    supportsTools: true,
+                    supportsJsonMode: true,
+                    supportsReasoningContent: false,
+                    maxContextTokens: 2097152,
+                    maxOutputTokens: 8192
+                },
+                isCustom: false,
+                isEnabled: true,
+                description: 'Highly capable reasoning model with 2M token context window.'
             },
             {
                 id: 'deepseek-chat',
@@ -311,32 +385,16 @@ export class HubDatabase {
             if (parsed.models && Array.isArray(parsed.models)) {
                 let didMigrate = false;
                 for (const m of parsed.models) {
-                    // Aggressively migrate any deprecated/old Gemini model IDs on load
+                    // Migrate any known deprecated/broken model IDs on load
                     const replacement = HubDatabase.DEPRECATED_MODEL_IDS[m.id];
-                    const isOldGemini =
-                        m.id.startsWith('gemini-2.') ||
-                        m.id.startsWith('gemini-1.') ||
-                        m.id.includes('preview') ||
-                        m.id.includes('flash-preview') ||
-                        m.id.includes('pro-preview');
 
                     // Filter out unwanted, non-chat or non-generative models
-                    const isUnwanted = !m.isCustom && (
-                        m.id.includes('embedding') ||
-                        m.id.includes('aqa') ||
-                        m.id.includes('imagen') ||
-                        m.id.includes('whisper') ||
-                        m.id.includes('bison') ||
-                        m.id.includes('vision') ||
-                        (m.providerId === 'google-gemini' && m.id.includes('gemma'))
-                    );
+                    const isUnwanted = HubDatabase.isUnwantedModel(m.id, m.providerId, !!m.isCustom);
 
-                    if (replacement || isOldGemini || isUnwanted) {
-                        // Delete the stale/unwanted model so it never shows in active models
+                    if (replacement || isUnwanted) {
                         this.models.delete(m.id);
-                        if (replacement || isOldGemini) {
-                            const targetId = replacement || 'gemini-3.8-flash';
-                            const freshSeed = Array.from(this.models.values()).find(s => s.id === targetId);
+                        if (replacement) {
+                            const freshSeed = Array.from(this.models.values()).find(s => s.id === replacement);
                             if (freshSeed) {
                                 this.models.set(freshSeed.id, freshSeed);
                             }
@@ -344,13 +402,15 @@ export class HubDatabase {
                         didMigrate = true;
                         continue;
                     }
-                    // Don't overwrite built-in seeded models with potentially stale saved copies
                     if (!this.models.has(m.id)) {
                         this.models.set(m.id, m);
                     }
                 }
+
+                // Ensure all default models exist in the map
+                this.seedDefaultModels();
+
                 if (didMigrate) {
-                    // Persist the cleaned-up state immediately so stale IDs are gone from disk
                     await this.persistState();
                 }
             }
@@ -362,8 +422,11 @@ export class HubDatabase {
             if (parsed.activeProviderId && this.providers.has(parsed.activeProviderId)) {
                 this.activeProviderId = parsed.activeProviderId;
             }
-            if (parsed.activeModelId && this.models.has(parsed.activeModelId)) {
-                this.activeModelId = parsed.activeModelId;
+            if (parsed.activeModelId) {
+                const targetModel = HubDatabase.DEPRECATED_MODEL_IDS[parsed.activeModelId] || parsed.activeModelId;
+                if (this.models.has(targetModel)) {
+                    this.activeModelId = targetModel;
+                }
             }
         } catch {
             // First time startup: write defaults to disk
@@ -414,7 +477,7 @@ export class HubDatabase {
         // If the deleted provider was active, reset to google-gemini
         if (this.activeProviderId === providerId) {
             this.activeProviderId = 'google-gemini';
-            this.activeModelId = 'gemini-3.8-flash';
+            this.activeModelId = 'gemini-2.5-flash';
         }
         await this.persistState();
     }
@@ -452,6 +515,21 @@ export class HubDatabase {
     }
 
     public async addOrUpdateModel(model: ModelMetadata): Promise<void> {
+        // Reject deprecated Gemini model IDs — they must never be written back to storage
+        if (HubDatabase.DEPRECATED_MODEL_IDS[model.id]) {
+            // Silently redirect: ensure the replacement is seeded instead
+            const replacement = HubDatabase.DEPRECATED_MODEL_IDS[model.id];
+            if (!this.models.has(replacement)) {
+                // keep the existing seeded replacement if present
+                const seed = Array.from(this.models.values()).find(m => m.id === replacement);
+                if (seed) this.models.set(replacement, seed);
+            }
+            return;
+        }
+        // Reject unwanted non-chat model categories
+        if (HubDatabase.isUnwantedModel(model.id, model.providerId, !!model.isCustom)) {
+            return;
+        }
         this.models.set(model.id, model);
         await this.persistState();
     }
@@ -464,14 +542,7 @@ export class HubDatabase {
     public async purgeUnwantedModels(): Promise<number> {
         let removed = 0;
         for (const [id, m] of this.models.entries()) {
-            const isUnwanted = !m.isCustom && (
-                m.id.includes('embedding') ||
-                m.id.includes('aqa') ||
-                m.id.includes('imagen') ||
-                m.id.includes('whisper') ||
-                m.id.includes('bison') ||
-                (m.providerId === 'google-gemini' && m.id.includes('gemma'))
-            );
+            const isUnwanted = HubDatabase.isUnwantedModel(m.id, m.providerId, !!m.isCustom);
             if (isUnwanted) {
                 this.models.delete(id);
                 removed++;

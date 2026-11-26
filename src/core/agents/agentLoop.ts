@@ -88,7 +88,14 @@ Rules:
 - Never guess file contents — always read the file first before editing.
 - Never propose edits to .env, secrets, or credential files.
 - Produce COMPLETE file content, not partial snippets.
-- Be direct and concise.`;
+- Be direct and concise.
+
+CRITICAL TOOL USAGE RULES:
+- Once you have called proposeFileEdit or createFile, STOP immediately. Do NOT call any more tools after that.
+- Respond with a brief text summary of what you proposed/created.
+- NEVER call the same tool twice with the same arguments — if you already read a file, use that content.
+- NEVER call readFile for the same file more than once per conversation turn.
+- After inspecting files, make a decision and act. Do not keep listing or reading more files indefinitely.`;
 
 const ASSISTANT_SYSTEM_PROMPT = `You are an AI coding assistant embedded in Antigravity IDE.
 You have direct tool access to the workspace:
@@ -99,7 +106,14 @@ You have direct tool access to the workspace:
 - You can propose modifications to existing files using proposeFileEdit.
 
 When the user asks you to create a program, script, or file, ALWAYS call the createFile tool with the desired relative path and the complete code. The user will be given a one-click approval button to save it to their disk.
-Never say you cannot create or edit files, because you have tools that do exactly that.`;
+Never say you cannot create or edit files, because you have tools that do exactly that.
+
+CRITICAL TOOL USAGE RULES:
+- Once you have called proposeFileEdit or createFile, STOP immediately. Do NOT call any more tools after that.
+- Respond with a brief text summary of what you proposed/created.
+- NEVER call the same tool twice with the same arguments.
+- NEVER call readFile for the same file more than once.
+- After gathering enough information, make a decision and act. Do not keep reading files indefinitely.`;
 
 // ─── Provider Protocol Detection ──────────────────────────────────────────────
 
@@ -206,7 +220,12 @@ export interface AgentLoopCallbacks {
 
 function isUsableChatModel(id: string, providerId: string): boolean {
     const lower = id.toLowerCase();
-    if (lower.includes('embedding') || lower.includes('aqa') || lower.includes('imagen') || lower.includes('bison') || lower.includes('whisper') || lower.includes('tts') || lower.includes('moderation') || lower.includes('dall-e') || lower.includes('vision')) {
+    // Exclude non-chat / embedding / image / audio / deprecated models
+    if (lower.includes('embedding') || lower.includes('aqa') || lower.includes('imagen') || lower.includes('bison') || lower.includes('whisper') || lower.includes('tts') || lower.includes('moderation') || lower.includes('dall-e') || lower.includes('vision') || id === 'gemini-3.8-pro' || id === 'gemini-3.8-flash') {
+        return false;
+    }
+    // Exclude lite models — they don't follow function-calling protocol reliably in an agent loop
+    if (lower.includes('flash-lite') || lower.includes('flash_lite') || lower.endsWith('-lite')) {
         return false;
     }
     if (providerId === 'google-gemini' && lower.includes('gemma')) {
@@ -236,6 +255,25 @@ function isSwitchableError(status: number, message: string): boolean {
            lower.includes('fetch failed') ||
            lower.includes('connection refused') ||
            lower.includes('enotfound');
+}
+
+/**
+ * Returns true when the quota is exhausted for the WHOLE DAY (a daily cap,
+ * not just a per-minute rate limit).  When this is true the agent loop should
+ * immediately skip ALL remaining models for that provider rather than trying
+ * them one by one.
+ */
+function isDailyQuotaExhausted(message: string): boolean {
+    const lower = message.toLowerCase();
+    return (
+        lower.includes('free_tier_requests') ||
+        lower.includes('per day') ||
+        lower.includes('daily') ||
+        (lower.includes('exceeded your current quota') && lower.includes('limit: 20')) ||
+        lower.includes('requests per day limit exceeded') ||
+        lower.includes('daily quota') ||
+        lower.includes('quota exceeded') && lower.includes('day')
+    );
 }
 
 /**
@@ -279,6 +317,13 @@ export function buildGeminiContents(history: Array<{ role: 'user' | 'assistant';
         alternating.push({ role: 'user', parts: [{ text: currentPrompt || 'Hello' }] });
     }
 
+    // Gemini REQUIRES the final turn to be a user turn.
+    // If the last turn is a model turn (e.g., from a previous failed response),
+    // drop it so the conversation is valid.
+    while (alternating.length > 1 && alternating[alternating.length - 1].role === 'model') {
+        alternating.pop();
+    }
+
     return alternating;
 }
 
@@ -303,7 +348,7 @@ export class AgentLoop {
 
     public async run(options: AgentLoopOptions, callbacks: AgentLoopCallbacks): Promise<void> {
         const { isDebugMode, prompt, history } = options;
-        const maxIter = options.maxIterations ?? 10;
+        const maxIter = options.maxIterations ?? 20;
         const systemPrompt = isDebugMode ? DEBUGGER_SYSTEM_PROMPT : ASSISTANT_SYSTEM_PROMPT;
 
         // Build ordered candidate list of models and providers for automated fallback
@@ -417,7 +462,9 @@ export class AgentLoop {
             }
         }
 
-        callbacks.onError(lastError?.message || 'All available models in the fallback chain failed.');
+        // Build a helpful error message when all candidates fail
+        const errMsg = lastError?.message || '';
+        callbacks.onError(errMsg || 'All available models in the fallback chain failed. Please check your API keys or quota.');
     }
 
     // ─── Gemini Loop ────────────────────────────────────────────────────────────
@@ -442,7 +489,22 @@ export class AgentLoop {
         };
 
         for (let i = 0; i < maxIter; i++) {
-            const data = await this.fetchJson(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey }, body: JSON.stringify(payload) });
+            let data: any;
+            try {
+                data = await this.fetchJson(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey }, body: JSON.stringify(payload) });
+            } catch (err: any) {
+                const errMsg = String(err?.message || err).toLowerCase();
+                // If model rejects multiturn, retry immediately by collapsing conversation history into a single turn
+                if (i === 0 && (errMsg.includes('multiturn') || errMsg.includes('multi-turn') || errMsg.includes('not enabled for this model'))) {
+                    callbacks.onThinking('Model rejects multi-turn chat directly. Flattening conversation history into single prompt and retrying...');
+                    const collapsedHistory = history.map(h => `${h.role === 'assistant' ? 'Assistant' : 'User'}: ${h.content}`).join('\n\n');
+                    const combined = collapsedHistory ? `${collapsedHistory}\n\nUser: ${prompt}` : prompt;
+                    payload.contents = [{ role: 'user', parts: [{ text: combined }] }];
+                    data = await this.fetchJson(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey }, body: JSON.stringify(payload) });
+                } else {
+                    throw err;
+                }
+            }
 
             const parts: any[] = data.candidates?.[0]?.content?.parts || [];
             const functionCallParts = parts.filter((p: any) => p.functionCall);
@@ -454,16 +516,44 @@ export class AgentLoop {
                 return textParts.map((p: any) => p.text).join('') || '(Empty response)';
             }
 
-            const responsePartsForGemini: any[] = [];
+        const responsePartsForGemini: any[] = [];
+            let hasPendingEdit = false;
+            const recentCallSigs: string[] = [];
+
             for (const fcPart of functionCallParts) {
                 const { name, args } = fcPart.functionCall;
+                const callSig = `${name}:${JSON.stringify(args)}`;
+
                 callbacks.onThinking(`Tool: ${name}(${Object.keys(args || {}).map(k => `${k}="${String(args[k]).substring(0, 50)}"`).join(', ')})`);
                 const result = await this.executor.execute({ name: name as any, args: args || {} });
                 callbacks.onToolResult(result);
-                if (result.pendingEdit) callbacks.onPendingEdit(result.pendingEdit);
+                if (result.pendingEdit) {
+                    callbacks.onPendingEdit(result.pendingEdit);
+                    hasPendingEdit = true;
+                }
                 responsePartsForGemini.push({ functionResponse: { name, response: { result: result.output } } });
+                recentCallSigs.push(callSig);
             }
             payload.contents.push({ role: 'user', parts: responsePartsForGemini });
+
+            // Exit early: a file edit/create was proposed — no need for more iterations
+            if (hasPendingEdit) {
+                return 'I have proposed the changes above. Please review and click **Approve and Save** to apply them, or **Reject** to discard.';
+            }
+
+            // Duplicate-call guard: if the last N calls are identical, the model is stuck in a loop
+            if (recentCallSigs.length > 0) {
+                const lastSig = recentCallSigs[recentCallSigs.length - 1];
+                const prevContents = payload.contents.slice(-6); // last ~3 iterations
+                const sigCount = prevContents.filter((c: any) =>
+                    c.role === 'user' && c.parts?.some((p: any) =>
+                        p.functionResponse && `${p.functionResponse.name}:${JSON.stringify(p.functionResponse.response?.result)}` === lastSig.replace(/^[^:]+:/, `${recentCallSigs[recentCallSigs.length - 1].split(':')[0]}:`)
+                    )
+                ).length;
+                if (sigCount >= 2) {
+                    return 'I have finished inspecting the codebase. Here is a summary of what I found based on the files I read. If you need me to propose specific edits, please ask and I will use proposeFileEdit.';
+                }
+            }
         }
         throw new Error(`Agent reached maximum iterations (${maxIter}).`);
     }
@@ -524,6 +614,7 @@ export class AgentLoop {
             }
 
             // Execute tool calls
+            let hasPendingEditOAI = false;
             for (const tc of toolCalls) {
                 const name = tc.function?.name;
                 let args: Record<string, any> = {};
@@ -532,13 +623,21 @@ export class AgentLoop {
                 callbacks.onThinking(`Tool: ${name}(${Object.keys(args).map(k => `${k}="${String(args[k]).substring(0, 50)}"`).join(', ')})`);
                 const result = await this.executor.execute({ name: name as any, args });
                 callbacks.onToolResult(result);
-                if (result.pendingEdit) callbacks.onPendingEdit(result.pendingEdit);
+                if (result.pendingEdit) {
+                    callbacks.onPendingEdit(result.pendingEdit);
+                    hasPendingEditOAI = true;
+                }
 
                 messages.push({
                     role: 'tool',
                     tool_call_id: tc.id,
                     content: result.output
                 });
+            }
+
+            // Exit early after a file edit/create is proposed
+            if (hasPendingEditOAI) {
+                return 'I have proposed the changes above. Please review and click **Approve and Save** to apply them, or **Reject** to discard.';
             }
         }
         throw new Error(`Agent reached maximum iterations (${maxIter}).`);
@@ -594,12 +693,16 @@ export class AgentLoop {
             }
 
             const toolResults: any[] = [];
+            let hasPendingEditAnt = false;
             for (const toolUse of toolUseBlocks) {
                 const { id, name, input } = toolUse;
                 callbacks.onThinking(`Tool: ${name}(${Object.keys(input || {}).map(k => `${k}="${String(input[k]).substring(0, 50)}"`).join(', ')})`);
                 const result = await this.executor.execute({ name: name as any, args: input || {} });
                 callbacks.onToolResult(result);
-                if (result.pendingEdit) callbacks.onPendingEdit(result.pendingEdit);
+                if (result.pendingEdit) {
+                    callbacks.onPendingEdit(result.pendingEdit);
+                    hasPendingEditAnt = true;
+                }
 
                 toolResults.push({
                     type: 'tool_result',
@@ -609,6 +712,11 @@ export class AgentLoop {
             }
 
             messages.push({ role: 'user', content: toolResults });
+
+            // Exit early after a file edit/create is proposed
+            if (hasPendingEditAnt) {
+                return 'I have proposed the changes above. Please review and click **Approve and Save** to apply them, or **Reject** to discard.';
+            }
         }
         throw new Error(`Agent reached maximum iterations (${maxIter}).`);
     }
@@ -664,7 +772,10 @@ export class AgentLoop {
             callbacks.onThinking(`Tool: ${toolName}(${Object.keys(args).map(k => `${k}="${String(args[k]).substring(0, 50)}"`).join(', ')})`);
             const result = await this.executor.execute({ name: toolName as any, args });
             callbacks.onToolResult(result);
-            if (result.pendingEdit) callbacks.onPendingEdit(result.pendingEdit);
+            if (result.pendingEdit) {
+                callbacks.onPendingEdit(result.pendingEdit);
+                return 'I have proposed the changes above. Please review and click **Approve and Save** to apply them, or **Reject** to discard.';
+            }
 
             conversationMessages.push({
                 role: 'user',

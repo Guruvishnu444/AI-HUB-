@@ -73,9 +73,24 @@ export async function activate(context: vscode.ExtensionContext) {
                 }
             );
 
-            panel.webview.html = getWebviewHtml();
+            // Register message receiver BEFORE setting html
             panel.webview.onDidReceiveMessage(async msg => {
-                await router.handleWebviewMessage(msg, out => panel.webview.postMessage(out));
+                try {
+                    await router.handleWebviewMessage(msg, out => panel.webview.postMessage(out));
+                } catch (err: any) {
+                    console.error('[Multi-AI Hub] Error handling panel message:', err);
+                }
+            });
+
+            panel.webview.html = getWebviewHtml();
+
+            // Push initial state immediately
+            router.syncState(out => panel.webview.postMessage(out));
+
+            panel.onDidChangeViewState(e => {
+                if (e.webviewPanel.visible) {
+                    router.syncState(out => panel.webview.postMessage(out));
+                }
             });
         })
     );
@@ -127,13 +142,30 @@ class HubSidebarViewProvider implements vscode.WebviewViewProvider {
         _token: vscode.CancellationToken
     ) {
         webviewView.webview.options = {
-            enableScripts: true
+            enableScripts: true,
+            localResourceRoots: [this.extensionUri]
         };
 
+        // 1. Attach message listener BEFORE setting html
+        webviewView.webview.onDidReceiveMessage(async msg => {
+            try {
+                await this.router.handleWebviewMessage(msg, out => webviewView.webview.postMessage(out));
+            } catch (err: any) {
+                console.error('[Multi-AI Hub] Error handling webview message:', err);
+            }
+        });
+
+        // 2. Set html content
         webviewView.webview.html = getWebviewHtml();
 
-        webviewView.webview.onDidReceiveMessage(async msg => {
-            await this.router.handleWebviewMessage(msg, out => webviewView.webview.postMessage(out));
+        // 3. Proactively sync state to webview immediately upon view resolution
+        this.router.syncState(out => webviewView.webview.postMessage(out));
+
+        // 4. When view becomes visible again, push fresh state
+        webviewView.onDidChangeVisibility(() => {
+            if (webviewView.visible) {
+                this.router.syncState(out => webviewView.webview.postMessage(out));
+            }
         });
     }
 }

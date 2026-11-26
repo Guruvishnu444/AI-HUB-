@@ -107,6 +107,7 @@ export class FallbackEngine {
                     m.id.includes('imagen') ||
                     m.id.includes('whisper') ||
                     m.id.includes('bison') ||
+                    m.id === 'gemini-3.8-pro' ||
                     (m.providerId === 'google-gemini' && m.id.includes('gemma'))
                 )) {
                     return false;

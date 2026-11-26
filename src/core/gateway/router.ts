@@ -27,7 +27,7 @@ export class GatewayRouter {
     private currentChatWorkspacePath: string | null = null;
     private messagesLoaded = false;
     private activeProviderId = 'google-gemini';
-    private activeModelId = 'gemini-3.8-flash';
+    private activeModelId = 'gemini-2.5-flash';
     private activeAbortControllers: Map<string, AbortController> = new Map();
 
     constructor(
@@ -526,12 +526,13 @@ export class GatewayRouter {
         msg: { prompt: string; providerId: string; modelId: string; isDebugMode: boolean; clientMessageId?: string },
         postMessage: (out: HostToWebviewMessage) => void
     ): Promise<void> {
+        const requestId = `agent_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
         if (!this.agentLoop) {
+            postMessage({ type: 'AGENT_ERROR', requestId, errorMessage: 'Agent loop not available. Please open a workspace folder first.' });
             postMessage({ type: 'SHOW_NOTIFICATION', message: 'Agent loop not available. Select a workspace folder first.', severity: 'warn' });
             return;
         }
 
-        const requestId = `agent_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
         this.activeProviderId = msg.providerId;
         this.activeModelId = msg.modelId;
 
@@ -547,76 +548,108 @@ export class GatewayRouter {
         postMessage({ type: 'USER_MESSAGE_COMMITTED', message: userMsg });
 
         // Build conversation history (without the current prompt, it's passed separately)
-        const history = this.messages.slice(0, -1).map(m => ({
-            role: m.role as 'user' | 'assistant',
-            content: m.content
-        })).filter(m => m.role === 'user' || m.role === 'assistant');
+        // Exclude past error messages so they don't poison LLM context or cause repetitive errors
+        const history = this.messages
+            .slice(0, -1)
+            .filter(m => (m.role === 'user' || m.role === 'assistant') && !m.content.startsWith('Error:'))
+            .map(m => ({
+                role: m.role as 'user' | 'assistant',
+                content: m.content
+            }));
 
         // Accumulate tool steps for the final assistant message
         const thinkingSteps: string[] = [];
         let finalContent = '';
+        let errorHandled = false;
 
-        await this.agentLoop.run(
-            {
-                isDebugMode: msg.isDebugMode,
+        try {
+            await this.agentLoop.run(
+                {
+                    isDebugMode: msg.isDebugMode,
+                    providerId: msg.providerId,
+                    modelId: msg.modelId,
+                    prompt: msg.prompt,
+                    history
+                },
+                {
+                    onThinking: (step) => {
+                        thinkingSteps.push(step);
+                        postMessage({ type: 'AGENT_THINKING', requestId, step });
+                    },
+                    onToolResult: (result) => {
+                        postMessage({
+                            type: 'AGENT_TOOL_RESULT',
+                            requestId,
+                            toolName: result.toolName,
+                            success: result.success,
+                            output: result.output.substring(0, 500) + (result.output.length > 500 ? '...' : '')
+                        });
+                    },
+                    onPendingEdit: (edit) => {
+                        postMessage({
+                            type: 'AGENT_EDIT_PROPOSAL',
+                            requestId,
+                            editId: edit.editId,
+                            filePath: edit.filePath,
+                            originalContent: edit.originalContent,
+                            proposedContent: edit.proposedContent,
+                            description: edit.description
+                        });
+                    },
+                    onFinalResponse: async (text, resolvedProviderId, resolvedModelId) => {
+                        finalContent = text;
+                        const finalProviderId = resolvedProviderId || msg.providerId;
+                        const finalModelId = resolvedModelId || msg.modelId;
+                        const assistantMsg: ChatMessage = {
+                            id: `msg_a_${Date.now()}`,
+                            role: 'assistant',
+                            content: text,
+                            providerId: finalProviderId,
+                            modelId: finalModelId,
+                            timestamp: Date.now()
+                        };
+                        this.messages.push(assistantMsg);
+                        await this.saveCurrentChat();
+                        postMessage({ type: 'AGENT_RESPONSE', requestId, message: assistantMsg });
+                        this.db.logAudit('REQUEST', finalProviderId, `Agent response (${msg.isDebugMode ? 'debug' : 'assistant'} mode, ${thinkingSteps.length} tool calls)`, finalModelId);
+                        if (finalProviderId !== msg.providerId || finalModelId !== msg.modelId) {
+                            this.activeProviderId = finalProviderId;
+                            this.activeModelId = finalModelId;
+                            await this.syncState(postMessage);
+                        }
+                    },
+                    onError: async (message) => {
+                        if (errorHandled) return;
+                        errorHandled = true;
+                        const errAssistantMsg: ChatMessage = {
+                            id: `msg_err_${Date.now()}`,
+                            role: 'assistant',
+                            content: `Error: ${message}`,
+                            providerId: msg.providerId,
+                            modelId: msg.modelId,
+                            timestamp: Date.now()
+                        };
+                        this.messages.push(errAssistantMsg);
+                        await this.saveCurrentChat();
+                        postMessage({ type: 'AGENT_ERROR', requestId, errorMessage: message });
+                    }
+                }
+            );
+        } catch (err: any) {
+            if (errorHandled) return;
+            errorHandled = true;
+            const errAssistantMsg: ChatMessage = {
+                id: `msg_err_${Date.now()}`,
+                role: 'assistant',
+                content: `Error: ${err?.message || err}`,
                 providerId: msg.providerId,
                 modelId: msg.modelId,
-                prompt: msg.prompt,
-                history
-            },
-            {
-                onThinking: (step) => {
-                    thinkingSteps.push(step);
-                    postMessage({ type: 'AGENT_THINKING', requestId, step });
-                },
-                onToolResult: (result) => {
-                    postMessage({
-                        type: 'AGENT_TOOL_RESULT',
-                        requestId,
-                        toolName: result.toolName,
-                        success: result.success,
-                        output: result.output.substring(0, 500) + (result.output.length > 500 ? '...' : '')
-                    });
-                },
-                onPendingEdit: (edit) => {
-                    postMessage({
-                        type: 'AGENT_EDIT_PROPOSAL',
-                        requestId,
-                        editId: edit.editId,
-                        filePath: edit.filePath,
-                        originalContent: edit.originalContent,
-                        proposedContent: edit.proposedContent,
-                        description: edit.description
-                    });
-                },
-                onFinalResponse: async (text, resolvedProviderId, resolvedModelId) => {
-                    finalContent = text;
-                    const finalProviderId = resolvedProviderId || msg.providerId;
-                    const finalModelId = resolvedModelId || msg.modelId;
-                    const assistantMsg: ChatMessage = {
-                        id: `msg_a_${Date.now()}`,
-                        role: 'assistant',
-                        content: text,
-                        providerId: finalProviderId,
-                        modelId: finalModelId,
-                        timestamp: Date.now()
-                    };
-                    this.messages.push(assistantMsg);
-                    await this.saveCurrentChat();
-                    postMessage({ type: 'AGENT_RESPONSE', requestId, message: assistantMsg });
-                    this.db.logAudit('REQUEST', finalProviderId, `Agent response (${msg.isDebugMode ? 'debug' : 'assistant'} mode, ${thinkingSteps.length} tool calls)`, finalModelId);
-                    if (finalProviderId !== msg.providerId || finalModelId !== msg.modelId) {
-                        this.activeProviderId = finalProviderId;
-                        this.activeModelId = finalModelId;
-                        this.syncState(postMessage);
-                    }
-                },
-                onError: (message) => {
-                    postMessage({ type: 'AGENT_ERROR', requestId, errorMessage: message });
-                    postMessage({ type: 'SHOW_NOTIFICATION', message: `Agent error: ${message}`, severity: 'error' });
-                }
-            }
-        );
+                timestamp: Date.now()
+            };
+            this.messages.push(errAssistantMsg);
+            await this.saveCurrentChat();
+            postMessage({ type: 'AGENT_ERROR', requestId, errorMessage: err?.message || String(err) });
+        }
     }
 
     private async handleSendPrompt(
@@ -654,11 +687,13 @@ export class GatewayRouter {
             modelId: msg.modelId
         });
 
-        const historyForRequest = this.messages.map(m => ({
-            role: m.role,
-            content: m.content,
-            attachments: m.attachments
-        }));
+        const historyForRequest = this.messages
+            .filter(m => !m.content.startsWith('Error:'))
+            .map(m => ({
+                role: m.role,
+                content: m.content,
+                attachments: m.attachments
+            }));
 
         const request: ChatCompletionRequest = {
             requestId,
@@ -738,7 +773,7 @@ export class GatewayRouter {
         }
     }
 
-    private async syncState(postMessage: (out: HostToWebviewMessage) => void): Promise<void> {
+    public async syncState(postMessage: (out: HostToWebviewMessage) => void): Promise<void> {
         await this.ensureMessagesLoaded();
         const providers = this.db.getProviders();
         const models = this.db.getModels();
